@@ -25,7 +25,7 @@ type OffsetManager interface {
 	// processes events serially, but this cannot be guaranteed if the consumer does any
 	// asynchronous processing. This can be handled in various ways, e.g. by only accepting
 	// offsets that are higehr than the offsets seen before for the same partition.
-	MarkAsProcessed(topic string, partition int32, offset int64) bool
+	MarkAsProcessed(topic string, partition int32, offset int64) error
 
 	// FinalizePartition is called when the consumergroup is done consuming a
 	// partition. In this method, the offset manager can flush any remaining offsets to its
@@ -42,7 +42,9 @@ type OffsetManager interface {
 }
 
 var (
-	UncleanClose = errors.New("Not all offsets were committed before shutdown was completed")
+	UncleanClose           = errors.New("Not all offsets were committed before shutdown was completed")
+	TopicPartitionNotFound = errors.New("Topic partition not found")
+	OffsetBackwardsError   = errors.New("Offset to be committed is smaller than highest processed offset")
 )
 
 // OffsetManagerConfig holds configuration setting son how the offset manager should behave.
@@ -148,13 +150,13 @@ func (zom *zookeeperOffsetManager) FinalizePartition(topic string, partition int
 	return nil
 }
 
-func (zom *zookeeperOffsetManager) MarkAsProcessed(topic string, partition int32, offset int64) bool {
+func (zom *zookeeperOffsetManager) MarkAsProcessed(topic string, partition int32, offset int64) error {
 	zom.l.RLock()
 	defer zom.l.RUnlock()
 	if p, ok := zom.offsets[topic][partition]; ok {
 		return p.markAsProcessed(offset)
 	} else {
-		return false
+		return TopicPartitionNotFound
 	}
 }
 
@@ -229,7 +231,7 @@ func (zom *zookeeperOffsetManager) commitOffset(topic string, partition int32, t
 
 // MarkAsProcessed marks the provided offset as highest processed offset if
 // it's higehr than any previous offset it has received.
-func (pot *partitionOffsetTracker) markAsProcessed(offset int64) bool {
+func (pot *partitionOffsetTracker) markAsProcessed(offset int64) error {
 	pot.l.Lock()
 	defer pot.l.Unlock()
 	if offset > pot.highestProcessedOffset {
@@ -237,9 +239,9 @@ func (pot *partitionOffsetTracker) markAsProcessed(offset int64) bool {
 		if pot.waitingForOffset == pot.highestProcessedOffset {
 			close(pot.done)
 		}
-		return true
+		return nil
 	} else {
-		return false
+		return OffsetBackwardsError
 	}
 }
 

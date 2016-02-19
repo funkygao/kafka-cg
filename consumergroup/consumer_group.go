@@ -243,8 +243,7 @@ func (cg *ConsumerGroup) InstanceRegistered() (bool, error) {
 }
 
 func (cg *ConsumerGroup) CommitUpto(message *sarama.ConsumerMessage) error {
-	cg.offsetManager.MarkAsProcessed(message.Topic, message.Partition, message.Offset)
-	return nil
+	return cg.offsetManager.MarkAsProcessed(message.Topic, message.Partition, message.Offset)
 }
 
 func (cg *ConsumerGroup) topicListConsumer(topics []string) {
