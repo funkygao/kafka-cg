@@ -46,7 +46,7 @@ func JoinConsumerGroup(name string, topics []string, zookeeper []string,
 		return nil, sarama.ConfigurationError("No topics provided")
 	}
 	if len(zookeeper) == 0 {
-		return nil, errors.New("You need to provide at least one zookeeper node address!")
+		return nil, errors.New("You need to provide at least one zookeeper node address")
 	}
 
 	if config == nil {
@@ -76,13 +76,11 @@ func JoinConsumerGroup(name string, topics []string, zookeeper []string,
 	if config.Offsets.ResetOffsets {
 		err = group.ResetOffsets()
 		if err != nil {
-			cg.Logf("FAILED to reset offsets of consumergroup: %s!\n", err)
+			cg.Logf("FAILED to reset offsets of consumergroup: %s", err)
 			kz.Close()
 			return
 		}
 	}
-
-	instance := group.NewInstance()
 
 	var consumer sarama.Consumer
 	if consumer, err = sarama.NewConsumer(brokers, config.Config); err != nil {
@@ -90,6 +88,7 @@ func JoinConsumerGroup(name string, topics []string, zookeeper []string,
 		return
 	}
 
+	instance := group.NewInstance()
 	cg = &ConsumerGroup{
 		config:   config,
 		consumer: consumer,
@@ -103,16 +102,16 @@ func JoinConsumerGroup(name string, topics []string, zookeeper []string,
 		stopper:  make(chan struct{}),
 	}
 
-	// Register consumer group
+	// Register consumer group in zookeeper
 	if exists, err := cg.group.Exists(); err != nil {
-		cg.Logf("FAILED to check for existence of consumergroup: %s!\n", err)
+		cg.Logf("FAILED to check for existence of consumergroup: %s", err)
 		_ = consumer.Close()
 		_ = kz.Close()
 		return nil, err
 	} else if !exists {
-		cg.Logf("Consumergroup `%s` does not yet exists, creating...\n", cg.group.Name)
+		cg.Logf("Consumergroup `%s` does not yet exists, creating...", cg.group.Name)
 		if err := cg.group.Create(); err != nil {
-			cg.Logf("FAILED to create consumergroup in Zookeeper: %s!\n", err)
+			cg.Logf("FAILED to create consumergroup in Zookeeper: %s", err)
 			_ = consumer.Close()
 			_ = kz.Close()
 			return nil, err
@@ -121,7 +120,7 @@ func JoinConsumerGroup(name string, topics []string, zookeeper []string,
 
 	// Register itself with zookeeper
 	if err := cg.instance.Register(topics); err != nil {
-		cg.Logf("FAILED to register consumer instance: %s!\n", err)
+		cg.Logf("FAILED to register consumer instance: %s", err)
 		return nil, err
 	} else {
 		cg.Logf("Consumer instance registered (%s).", cg.instance.ID)
@@ -160,17 +159,17 @@ func (cg *ConsumerGroup) Close() error {
 		cg.wg.Wait()
 
 		if err := cg.offsetManager.Close(); err != nil {
-			cg.Logf("FAILED closing the offset manager: %s!\n", err)
+			cg.Logf("FAILED closing the offset manager: %s", err)
 		}
 
 		if shutdownError = cg.instance.Deregister(); shutdownError != nil {
-			cg.Logf("FAILED deregistering consumer instance: %s!\n", shutdownError)
+			cg.Logf("FAILED deregistering consumer instance: %s", shutdownError)
 		} else {
-			cg.Logf("Deregistered consumer instance %s.\n", cg.instance.ID)
+			cg.Logf("Deregistered consumer instance %s", cg.instance.ID)
 		}
 
 		if shutdownError = cg.consumer.Close(); shutdownError != nil {
-			cg.Logf("FAILED closing the Sarama client: %s\n", shutdownError)
+			cg.Logf("FAILED closing the Sarama client: %s", shutdownError)
 		}
 
 		close(cg.messages)
@@ -191,10 +190,6 @@ func (cg *ConsumerGroup) Logf(format string, args ...interface{}) {
 	sarama.Logger.Printf("[%s/%s] %s", cg.group.Name, identifier, fmt.Sprintf(format, args...))
 }
 
-func (cg *ConsumerGroup) InstanceRegistered() (bool, error) {
-	return cg.instance.Registered()
-}
-
 func (cg *ConsumerGroup) CommitUpto(message *sarama.ConsumerMessage) error {
 	return cg.offsetManager.MarkAsProcessed(message.Topic, message.Partition, message.Offset)
 }
@@ -207,14 +202,16 @@ func (cg *ConsumerGroup) topicListConsumer(topics []string) {
 		default:
 		}
 
+		// TODO cg.group.WatchTopics(topics)
+
 		consumers, consumerChanges, err := cg.group.WatchInstances()
 		if err != nil {
-			cg.Logf("FAILED to get list of registered consumer instances: %s\n", err)
+			cg.Logf("FAILED to get list of registered consumer instances: %s", err)
 			return
 		}
 
 		cg.consumers = consumers
-		cg.Logf("Currently registered consumers: %d\n", len(cg.consumers))
+		cg.Logf("Currently registered consumers: %d", len(cg.consumers))
 
 		stopper := make(chan struct{})
 
@@ -229,7 +226,7 @@ func (cg *ConsumerGroup) topicListConsumer(topics []string) {
 			return
 
 		case <-consumerChanges:
-			cg.Logf("Triggering rebalance due to consumer list change\n")
+			cg.Logf("Triggering rebalance due to consumer list change")
 			close(stopper)
 			cg.wg.Wait()
 		}
@@ -245,12 +242,12 @@ func (cg *ConsumerGroup) topicConsumer(topic string, messages chan<- *sarama.Con
 	default:
 	}
 
-	cg.Logf("%s :: Started topic consumer\n", topic)
+	cg.Logf("%s :: Started topic consumer", topic)
 
 	// Fetch a list of partition IDs
 	partitions, err := cg.kazoo.Topic(topic).Partitions()
 	if err != nil {
-		cg.Logf("%s :: FAILED to get list of partitions: %s\n", topic, err)
+		cg.Logf("%s :: FAILED to get list of partitions: %s", topic, err)
 		cg.errors <- &sarama.ConsumerError{
 			Topic:     topic,
 			Partition: -1,
@@ -261,7 +258,7 @@ func (cg *ConsumerGroup) topicConsumer(topic string, messages chan<- *sarama.Con
 
 	partitionLeaders, err := retrievePartitionLeaders(partitions)
 	if err != nil {
-		cg.Logf("%s :: FAILED to get leaders of partitions: %s\n", topic, err)
+		cg.Logf("%s :: FAILED to get leaders of partitions: %s", topic, err)
 		cg.errors <- &sarama.ConsumerError{
 			Topic:     topic,
 			Partition: -1,
@@ -283,7 +280,7 @@ func (cg *ConsumerGroup) topicConsumer(topic string, messages chan<- *sarama.Con
 	}
 
 	wg.Wait()
-	cg.Logf("%s :: Stopped topic consumer\n", topic)
+	cg.Logf("%s :: Stopped topic consumer", topic)
 }
 
 // Consumes a partition
@@ -302,7 +299,7 @@ func (cg *ConsumerGroup) partitionConsumer(topic string, partition int32, messag
 		} else if err == kazoo.ErrPartitionClaimedByOther && tries+1 < maxRetries {
 			time.Sleep(1 * time.Second)
 		} else {
-			cg.Logf("%s/%d :: FAILED to claim the partition: %s\n", topic, partition, err)
+			cg.Logf("%s/%d :: FAILED to claim the partition: %s", topic, partition, err)
 			return
 		}
 	}
@@ -310,39 +307,39 @@ func (cg *ConsumerGroup) partitionConsumer(topic string, partition int32, messag
 
 	nextOffset, err := cg.offsetManager.InitializePartition(topic, partition)
 	if err != nil {
-		cg.Logf("%s/%d :: FAILED to determine initial offset: %s\n", topic, partition, err)
+		cg.Logf("%s/%d :: FAILED to determine initial offset: %s", topic, partition, err)
 		return
 	}
 
 	if nextOffset >= 0 {
-		cg.Logf("%s/%d :: Partition consumer starting at offset %d.\n", topic, partition, nextOffset)
+		cg.Logf("%s/%d :: Partition consumer starting at offset %d", topic, partition, nextOffset)
 	} else {
 		nextOffset = cg.config.Offsets.Initial
 		if nextOffset == sarama.OffsetOldest {
-			cg.Logf("%s/%d :: Partition consumer starting at the oldest available offset.\n", topic, partition)
+			cg.Logf("%s/%d :: Partition consumer starting at the oldest available offset", topic, partition)
 		} else if nextOffset == sarama.OffsetNewest {
-			cg.Logf("%s/%d :: Partition consumer listening for new messages only.\n", topic, partition)
+			cg.Logf("%s/%d :: Partition consumer listening for new messages only", topic, partition)
 		}
 	}
 
 	consumer, err := cg.consumer.ConsumePartition(topic, partition, nextOffset)
 	if err == sarama.ErrOffsetOutOfRange {
-		cg.Logf("%s/%d :: Partition consumer offset out of Range.\n", topic, partition)
+		cg.Logf("%s/%d :: Partition consumer offset out of Range", topic, partition)
 		// if the offset is out of range, simplistically decide whether to use OffsetNewest or OffsetOldest
 		// if the configuration specified offsetOldest, then switch to the oldest available offset, else
 		// switch to the newest available offset.
 		if cg.config.Offsets.Initial == sarama.OffsetOldest {
 			nextOffset = sarama.OffsetOldest
-			cg.Logf("%s/%d :: Partition consumer offset reset to oldest available offset.\n", topic, partition)
+			cg.Logf("%s/%d :: Partition consumer offset reset to oldest available offset", topic, partition)
 		} else {
 			nextOffset = sarama.OffsetNewest
-			cg.Logf("%s/%d :: Partition consumer offset reset to newest available offset.\n", topic, partition)
+			cg.Logf("%s/%d :: Partition consumer offset reset to newest available offset", topic, partition)
 		}
 		// retry the consumePartition with the adjusted offset
 		consumer, err = cg.consumer.ConsumePartition(topic, partition, nextOffset)
 	}
 	if err != nil {
-		cg.Logf("%s/%d :: FAILED to start partition consumer: %s\n", topic, partition, err)
+		cg.Logf("%s/%d :: FAILED to start partition consumer: %s", topic, partition, err)
 		return
 	}
 	defer consumer.Close()
@@ -380,8 +377,8 @@ partitionConsumerLoop:
 		}
 	}
 
-	cg.Logf("%s/%d :: Stopping partition consumer at offset %d\n", topic, partition, lastOffset)
+	cg.Logf("%s/%d :: Stopping partition consumer at offset %d", topic, partition, lastOffset)
 	if err := cg.offsetManager.FinalizePartition(topic, partition, lastOffset, cg.config.Offsets.ProcessingTimeout); err != nil {
-		cg.Logf("%s/%d :: %s\n", topic, partition, err)
+		cg.Logf("%s/%d :: %s", topic, partition, err)
 	}
 }
