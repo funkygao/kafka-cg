@@ -81,6 +81,8 @@ func ExampleConsumerGroup() {
 ////////////////////////////////////////////////////////////////////
 
 func TestIntegrationMultipleTopicsSingleConsumer(t *testing.T) {
+	t.Skip()
+
 	consumerGroup := "TestIntegrationMultipleTopicsSingleConsumer"
 	setupZookeeper(t, consumerGroup, TopicWithSinglePartition, 1)
 	setupZookeeper(t, consumerGroup, TopicWithMultiplePartitions, 4)
@@ -100,6 +102,8 @@ func TestIntegrationMultipleTopicsSingleConsumer(t *testing.T) {
 }
 
 func TestIntegrationSingleTopicParallelConsumers(t *testing.T) {
+	t.Skip()
+
 	consumerGroup := "TestIntegrationSingleTopicParallelConsumers"
 	setupZookeeper(t, consumerGroup, TopicWithMultiplePartitions, 4)
 	go produceEvents(t, consumerGroup, TopicWithMultiplePartitions, 200)
@@ -159,6 +163,8 @@ func TestIntegrationSingleTopicParallelConsumers(t *testing.T) {
 }
 
 func TestSingleTopicSequentialConsumer(t *testing.T) {
+	t.Skip()
+
 	consumerGroup := "TestSingleTopicSequentialConsumer"
 	setupZookeeper(t, consumerGroup, TopicWithSinglePartition, 1)
 	go produceEvents(t, consumerGroup, TopicWithSinglePartition, 20)
