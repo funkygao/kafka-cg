@@ -196,13 +196,13 @@ func (cg *ConsumerGroup) CommitUpto(message *sarama.ConsumerMessage) error {
 
 func (cg *ConsumerGroup) topicListConsumer(topics []string) {
 	for {
+		// each loop is a rebalance process
+
 		select {
 		case <-cg.stopper:
 			return
 		default:
 		}
-
-		// TODO cg.group.WatchTopics(topics)
 
 		consumers, consumerChanges, err := cg.group.WatchInstances()
 		if err != nil {
@@ -211,29 +211,30 @@ func (cg *ConsumerGroup) topicListConsumer(topics []string) {
 		}
 
 		cg.consumers = consumers
-		cg.Logf("Currently registered consumers: %d", len(cg.consumers))
+		cg.Logf("Currently registered consumers: %+v", cg.consumers)
 
-		stopper := make(chan struct{})
+		topicConsumerStopper := make(chan struct{})
 
 		for _, topic := range topics {
 			cg.wg.Add(1)
-			go cg.topicConsumer(topic, cg.messages, cg.errors, stopper)
+			go cg.topicConsumer(topic, cg.messages, cg.errors, topicConsumerStopper)
 		}
 
 		select {
 		case <-cg.stopper:
-			close(stopper)
+			close(topicConsumerStopper) // notify all topic consumers stop
 			return
 
 		case <-consumerChanges:
 			cg.Logf("Triggering rebalance due to consumer list change")
-			close(stopper)
-			cg.wg.Wait()
+			close(topicConsumerStopper) // notify all topic consumers stop
+			cg.wg.Wait()                // wait for all topic consumers finish
 		}
 	}
 }
 
-func (cg *ConsumerGroup) topicConsumer(topic string, messages chan<- *sarama.ConsumerMessage, errors chan<- *sarama.ConsumerError, stopper <-chan struct{}) {
+func (cg *ConsumerGroup) topicConsumer(topic string, messages chan<- *sarama.ConsumerMessage,
+	errors chan<- *sarama.ConsumerError, stopper <-chan struct{}) {
 	defer cg.wg.Done()
 
 	select {
@@ -273,10 +274,14 @@ func (cg *ConsumerGroup) topicConsumer(topic string, messages chan<- *sarama.Con
 
 	// Consume all the assigned partitions
 	var wg sync.WaitGroup
-	for _, pid := range myPartitions {
-
+	for _, partition := range myPartitions {
 		wg.Add(1)
-		go cg.partitionConsumer(topic, pid.ID, messages, errors, &wg, stopper)
+		go cg.partitionConsumer(topic, partition.ID, messages, errors, &wg, stopper)
+	}
+
+	select {
+	case <-stopper:
+
 	}
 
 	wg.Wait()
@@ -284,7 +289,8 @@ func (cg *ConsumerGroup) topicConsumer(topic string, messages chan<- *sarama.Con
 }
 
 // Consumes a partition
-func (cg *ConsumerGroup) partitionConsumer(topic string, partition int32, messages chan<- *sarama.ConsumerMessage, errors chan<- *sarama.ConsumerError, wg *sync.WaitGroup, stopper <-chan struct{}) {
+func (cg *ConsumerGroup) partitionConsumer(topic string, partition int32, messages chan<- *sarama.ConsumerMessage,
+	errors chan<- *sarama.ConsumerError, wg *sync.WaitGroup, stopper <-chan struct{}) {
 	defer wg.Done()
 
 	select {
