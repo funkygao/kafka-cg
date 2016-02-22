@@ -123,7 +123,7 @@ func JoinConsumerGroup(name string, topics []string, zookeeper []string,
 		cg.Logf("FAILED to register consumer instance: %s", err)
 		return nil, err
 	} else {
-		cg.Logf("Consumer instance registered (%s).", cg.instance.ID)
+		cg.Logf("Consumer instance registered: %s", cg.instance.ID)
 	}
 
 	offsetConfig := OffsetManagerConfig{CommitInterval: config.Offsets.CommitInterval}
@@ -211,7 +211,7 @@ func (cg *ConsumerGroup) topicListConsumer(topics []string) {
 		}
 
 		cg.consumers = consumers
-		cg.Logf("Currently registered consumers: %+v", cg.consumers)
+		cg.Logf("Currently registered consumers: %d", len(cg.consumers))
 
 		topicConsumerStopper := make(chan struct{})
 		topicChanges := make(chan struct{}, 1)
@@ -304,11 +304,6 @@ func (cg *ConsumerGroup) topicConsumer(topic string, messages chan<- *sarama.Con
 	for _, partition := range myPartitions {
 		wg.Add(1)
 		go cg.partitionConsumer(topic, partition.ID, messages, errors, &wg, stopper)
-	}
-
-	select {
-	case <-stopper:
-
 	}
 
 	wg.Wait()
