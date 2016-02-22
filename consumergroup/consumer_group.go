@@ -196,7 +196,7 @@ func (cg *ConsumerGroup) CommitUpto(message *sarama.ConsumerMessage) error {
 
 func (cg *ConsumerGroup) topicListConsumer(topics []string) {
 	for {
-		// each loop is a rebalance process
+		// each loop is a new rebalance process
 
 		select {
 		case <-cg.stopper:
@@ -214,9 +214,11 @@ func (cg *ConsumerGroup) topicListConsumer(topics []string) {
 		cg.Logf("Currently registered consumers: %+v", cg.consumers)
 
 		topicConsumerStopper := make(chan struct{})
+		topicChanges := make(chan struct{}, 1)
 
 		for _, topic := range topics {
 			cg.wg.Add(1)
+			go cg.watchTopicChange(topic, topicConsumerStopper, topicChanges)
 			go cg.topicConsumer(topic, cg.messages, cg.errors, topicConsumerStopper)
 		}
 
@@ -229,7 +231,32 @@ func (cg *ConsumerGroup) topicListConsumer(topics []string) {
 			cg.Logf("Triggering rebalance due to consumer list change")
 			close(topicConsumerStopper) // notify all topic consumers stop
 			cg.wg.Wait()                // wait for all topic consumers finish
+
+		case <-topicChanges:
+			cg.Logf("Triggering rebalance due to topic partitions change")
+			close(topicConsumerStopper) // notify all topic consumers stop
+			cg.wg.Wait()                // wait for all topic consumers finish
 		}
+	}
+}
+
+// watchTopicChange watch partition changes on a topic.
+func (cg *ConsumerGroup) watchTopicChange(topic string, stopper <-chan struct{}, topicChanges chan<- struct{}) {
+	_, topicPartitionChanges, err := cg.kazoo.Topic(topic).WatchPartitions()
+	if err != nil {
+		cg.Logf("FAILED to get partitions of topic[%s]: %s", topic, err)
+		return
+	}
+
+	select {
+	case <-cg.stopper:
+		return
+
+	case <-stopper:
+		return
+
+	case <-topicPartitionChanges:
+		topicChanges <- struct{}{}
 	}
 }
 
