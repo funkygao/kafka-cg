@@ -42,11 +42,9 @@ func JoinConsumerGroup(name string, topics []string, zookeeper []string,
 	if name == "" {
 		return nil, sarama.ConfigurationError("Empty consumergroup name")
 	}
-
 	if len(topics) == 0 {
 		return nil, sarama.ConfigurationError("No topics provided")
 	}
-
 	if len(zookeeper) == 0 {
 		return nil, errors.New("You need to provide at least one zookeeper node address!")
 	}
@@ -66,7 +64,8 @@ func JoinConsumerGroup(name string, topics []string, zookeeper []string,
 		return
 	}
 
-	brokers, err := kz.BrokerList()
+	var brokers []string
+	brokers, err = kz.BrokerList()
 	if err != nil {
 		kz.Close()
 		return
