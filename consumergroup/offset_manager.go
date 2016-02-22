@@ -45,6 +45,7 @@ var (
 	UncleanClose           = errors.New("Not all offsets were committed before shutdown was completed")
 	TopicPartitionNotFound = errors.New("Topic partition not found")
 	OffsetBackwardsError   = errors.New("Offset to be committed is smaller than highest processed offset")
+	NoOffsetToCommit       = errors.New("No offsets to commit")
 )
 
 // OffsetManagerConfig holds configuration setting son how the offset manager should behave.
@@ -255,10 +256,11 @@ func (pot *partitionOffsetTracker) commit(committer offsetCommitter) error {
 		if err := committer(pot.highestProcessedOffset); err != nil {
 			return err
 		}
+
 		pot.lastCommittedOffset = pot.highestProcessedOffset
 		return nil
 	} else {
-		return nil
+		return NoOffsetToCommit
 	}
 }
 
