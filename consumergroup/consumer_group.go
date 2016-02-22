@@ -14,52 +14,6 @@ var (
 	AlreadyClosing = errors.New("The consumer group is already shutting down.")
 )
 
-type Config struct {
-	*sarama.Config
-
-	Zookeeper *kazoo.Config
-
-	Offsets struct {
-		Initial           int64         // The initial offset method to use if the consumer has no previously stored offset. Must be either sarama.OffsetOldest (default) or sarama.OffsetNewest.
-		ProcessingTimeout time.Duration // Time to wait for all the offsets for a partition to be processed after stopping to consume from it. Defaults to 1 minute.
-		CommitInterval    time.Duration // The interval between which the processed offsets are commited.
-		ResetOffsets      bool          // Resets the offsets for the consumergroup so that it won't resume from where it left off previously.
-	}
-}
-
-func NewConfig() *Config {
-	config := &Config{}
-	config.Config = sarama.NewConfig()
-	config.Zookeeper = kazoo.NewConfig()
-	config.Offsets.Initial = sarama.OffsetOldest
-	config.Offsets.ProcessingTimeout = 60 * time.Second
-	config.Offsets.CommitInterval = 10 * time.Second
-
-	return config
-}
-
-func (cgc *Config) Validate() error {
-	if cgc.Zookeeper.Timeout <= 0 {
-		return sarama.ConfigurationError("ZookeeperTimeout should have a duration > 0")
-	}
-
-	if cgc.Offsets.CommitInterval <= 0 {
-		return sarama.ConfigurationError("CommitInterval should have a duration > 0")
-	}
-
-	if cgc.Offsets.Initial != sarama.OffsetOldest && cgc.Offsets.Initial != sarama.OffsetNewest {
-		return errors.New("Offsets.Initial should be sarama.OffsetOldest or sarama.OffsetNewest.")
-	}
-
-	if cgc.Config != nil {
-		if err := cgc.Config.Validate(); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
 // The ConsumerGroup type holds all the information for a consumer that is part
 // of a consumer group. Call JoinConsumerGroup to start a consumer.
 type ConsumerGroup struct {
@@ -83,8 +37,8 @@ type ConsumerGroup struct {
 }
 
 // Connects to a consumer group, using Zookeeper for auto-discovery
-func JoinConsumerGroup(name string, topics []string, zookeeper []string, config *Config) (cg *ConsumerGroup, err error) {
-
+func JoinConsumerGroup(name string, topics []string, zookeeper []string,
+	config *Config) (cg *ConsumerGroup, err error) {
 	if name == "" {
 		return nil, sarama.ConfigurationError("Empty consumergroup name")
 	}
