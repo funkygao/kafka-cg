@@ -16,7 +16,7 @@ type OffsetManager interface {
 	// consumer group due to other consumer instances coming online and offline.
 	InitializePartition(topic string, partition int32) (int64, error)
 
-	// MarkAsProcessed tells the offset manager than a certain message has been successfully
+	// MarkAsProcessed tells the offset manager that a certain message has been successfully
 	// processed by the consumer, and should be committed. The implementation does not have
 	// to store this offset right away, but should return true if it intends to do this at
 	// some point.
