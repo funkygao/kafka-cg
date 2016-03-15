@@ -360,6 +360,7 @@ func (cg *ConsumerGroup) partitionConsumer(topic string, partition int32, messag
 			nextOffset = sarama.OffsetOldest
 			cg.Logf("%s/%d :: Partition consumer offset reset to oldest available offset", topic, partition)
 		} else {
+			// even when user specifies initial offset, it is reset to newest
 			nextOffset = sarama.OffsetNewest
 			cg.Logf("%s/%d :: Partition consumer offset reset to newest available offset", topic, partition)
 		}
