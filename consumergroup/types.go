@@ -1,7 +1,7 @@
 package consumergroup
 
 import (
-	"github.com/wvanbergen/kazoo-go"
+	"github.com/funkygao/kazoo-go"
 )
 
 type partitionLeader struct {

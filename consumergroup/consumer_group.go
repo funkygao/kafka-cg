@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/Shopify/sarama"
-	"github.com/wvanbergen/kazoo-go"
+	"github.com/funkygao/kazoo-go"
 )
 
 var (

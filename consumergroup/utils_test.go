@@ -3,7 +3,7 @@ package consumergroup
 import (
 	"testing"
 
-	"github.com/wvanbergen/kazoo-go"
+	"github.com/funkygao/kazoo-go"
 )
 
 func TestDividePartitionsBetweenConsumers(t *testing.T) {
