@@ -16,9 +16,9 @@ type partitionOffsetTracker struct {
 	l    sync.Mutex
 	done chan struct{}
 
-	waitingForOffset       int64 //
-	highestProcessedOffset int64 //
-	lastCommittedOffset    int64 //
+	waitingForOffset               int64
+	highestMarkedAsProcessedOffset int64
+	lastCommittedOffset            int64
 }
 
 type zookeeperOffsetManager struct {
@@ -64,9 +64,9 @@ func (zom *zookeeperOffsetManager) InitializePartition(topic string, partition i
 	}
 
 	zom.offsets[topic][partition] = &partitionOffsetTracker{
-		highestProcessedOffset: nextOffset - 1,
-		lastCommittedOffset:    nextOffset - 1,
-		done:                   make(chan struct{}),
+		highestMarkedAsProcessedOffset: nextOffset - 1,
+		lastCommittedOffset:            nextOffset - 1,
+		done:                           make(chan struct{}),
 	}
 
 	return nextOffset, nil
@@ -78,15 +78,15 @@ func (zom *zookeeperOffsetManager) FinalizePartition(topic string, partition int
 	zom.l.RUnlock()
 
 	if lastOffset >= 0 {
-		if lastOffset-tracker.highestProcessedOffset > 0 {
-			zom.cg.Logf("%s/%d :: Last processed offset: %d. Waiting up to %ds for another %d messages to process...", topic, partition, tracker.highestProcessedOffset, timeout/time.Second, lastOffset-tracker.highestProcessedOffset)
+		if lastOffset-tracker.highestMarkedAsProcessedOffset > 0 {
+			zom.cg.Logf("%s/%d :: Last processed offset: %d. Waiting up to %ds for another %d messages to process...", topic, partition, tracker.highestMarkedAsProcessedOffset, timeout/time.Second, lastOffset-tracker.highestMarkedAsProcessedOffset)
 			if !tracker.waitForOffset(lastOffset, timeout) {
 				return fmt.Errorf("TIMEOUT waiting for offset %d. Last committed offset: %d", lastOffset, tracker.lastCommittedOffset)
 			}
 		}
 
 		if err := zom.commitOffset(topic, partition, tracker); err != nil {
-			return fmt.Errorf("FAILED to commit offset %d to Zookeeper. Last committed offset: %d", tracker.highestProcessedOffset, tracker.lastCommittedOffset)
+			return fmt.Errorf("FAILED to commit offset %d to Zookeeper. Last committed offset: %d", tracker.highestMarkedAsProcessedOffset, tracker.lastCommittedOffset)
 		}
 	}
 
@@ -133,29 +133,22 @@ func (zom *zookeeperOffsetManager) offsetCommitter() {
 		case <-zom.closing:
 			close(zom.closed)
 			return
+
 		case <-commitTicker.C:
 			zom.commitOffsets()
 		}
 	}
 }
 
-func (zom *zookeeperOffsetManager) commitOffsets() error {
+func (zom *zookeeperOffsetManager) commitOffsets() {
 	zom.l.RLock()
 	defer zom.l.RUnlock()
 
-	var returnErr error
 	for topic, partitionOffsets := range zom.offsets {
 		for partition, offsetTracker := range partitionOffsets {
-			err := zom.commitOffset(topic, partition, offsetTracker)
-			switch err {
-			case nil:
-				// noop
-			default:
-				returnErr = err
-			}
+			zom.commitOffset(topic, partition, offsetTracker)
 		}
 	}
-	return returnErr
 }
 
 func (zom *zookeeperOffsetManager) commitOffset(topic string, partition int32, tracker *partitionOffsetTracker) error {
@@ -168,7 +161,7 @@ func (zom *zookeeperOffsetManager) commitOffset(topic string, partition int32, t
 	})
 
 	if err != nil {
-		zom.cg.Logf("FAILED to commit offset %d for %s/%d!", tracker.highestProcessedOffset, topic, partition)
+		zom.cg.Logf("FAILED to commit offset %d for %s/%d!", tracker.highestMarkedAsProcessedOffset, topic, partition)
 	} else if zom.config.VerboseLogging {
 		zom.cg.Logf("Committed offset %d for %s/%d!", tracker.lastCommittedOffset, topic, partition)
 	}
@@ -181,9 +174,9 @@ func (zom *zookeeperOffsetManager) commitOffset(topic string, partition int32, t
 func (pot *partitionOffsetTracker) markAsProcessed(offset int64) error {
 	pot.l.Lock()
 	defer pot.l.Unlock()
-	if offset > pot.highestProcessedOffset {
-		pot.highestProcessedOffset = offset
-		if pot.waitingForOffset == pot.highestProcessedOffset {
+	if offset > pot.highestMarkedAsProcessedOffset {
+		pot.highestMarkedAsProcessedOffset = offset
+		if pot.waitingForOffset == pot.highestMarkedAsProcessedOffset {
 			close(pot.done)
 		}
 		return nil
@@ -198,12 +191,12 @@ func (pot *partitionOffsetTracker) commit(committer offsetCommitter) error {
 	pot.l.Lock()
 	defer pot.l.Unlock()
 
-	if pot.highestProcessedOffset > pot.lastCommittedOffset {
-		if err := committer(pot.highestProcessedOffset); err != nil {
+	if pot.highestMarkedAsProcessedOffset > pot.lastCommittedOffset {
+		if err := committer(pot.highestMarkedAsProcessedOffset); err != nil {
 			return err
 		}
 
-		pot.lastCommittedOffset = pot.highestProcessedOffset
+		pot.lastCommittedOffset = pot.highestMarkedAsProcessedOffset
 		return nil
 	} else {
 		return NoOffsetToCommit
@@ -212,7 +205,7 @@ func (pot *partitionOffsetTracker) commit(committer offsetCommitter) error {
 
 func (pot *partitionOffsetTracker) waitForOffset(offset int64, timeout time.Duration) bool {
 	pot.l.Lock()
-	if offset > pot.highestProcessedOffset {
+	if offset > pot.highestMarkedAsProcessedOffset {
 		pot.waitingForOffset = offset
 		pot.l.Unlock()
 		select {
