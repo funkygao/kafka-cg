@@ -227,6 +227,24 @@ func (cg *ConsumerGroup) topicListConsumer(topics []string) {
 			return
 
 		case <-consumerChanges:
+			// when zk session expires, we need to re-register ephemeral znode
+			//
+			// how to reproduce:
+			// iptables -A  OUTPUT -p tcp -m tcp --dport 2181 -j DROP # add rule
+			// after 30s
+			// iptables -D  OUTPUT -p tcp -m tcp --dport 2181 -j      # rm rule
+			registered, err := cg.instance.Registered()
+			if err != nil {
+				cg.Logf("FAILED to get register status: %s", err)
+			} else if !registered {
+				err = cg.instance.Register(topics)
+				if err != nil {
+					cg.Logf("FAILED to register consumer instance: %s", err)
+				} else {
+					cg.Logf("Consumer instance registered: %s", cg.instance.ID)
+				}
+			}
+
 			cg.Logf("Triggering rebalance due to consumer list change")
 			close(topicConsumerStopper) // notify all topic consumers stop
 			cg.wg.Wait()                // wait for all topic consumers finish
