@@ -20,9 +20,11 @@ type ConsumerGroup struct {
 	config *Config
 
 	consumer sarama.Consumer
-	kazoo    *kazoo.Kazoo
-	group    *kazoo.Consumergroup
-	instance *kazoo.ConsumergroupInstance
+
+	kazoo     *kazoo.Kazoo
+	group     *kazoo.Consumergroup
+	instance  *kazoo.ConsumergroupInstance
+	consumers kazoo.ConsumergroupInstanceList
 
 	wg             sync.WaitGroup
 	singleShutdown sync.Once
@@ -30,8 +32,6 @@ type ConsumerGroup struct {
 	messages chan *sarama.ConsumerMessage
 	errors   chan *sarama.ConsumerError
 	stopper  chan struct{}
-
-	consumers kazoo.ConsumergroupInstanceList
 
 	offsetManager OffsetManager
 }
@@ -53,8 +53,6 @@ func JoinConsumerGroup(name string, topics []string, zookeeper []string,
 		config = NewConfig()
 	}
 	config.ClientID = name
-
-	// Validate configuration
 	if err = config.Validate(); err != nil {
 		return
 	}
@@ -139,7 +137,7 @@ func (cg *ConsumerGroup) Messages() <-chan *sarama.ConsumerMessage {
 	return cg.messages
 }
 
-// Returns a channel that you can read to obtain events from Kafka to process.
+// Returns a channel that you can read to obtain errors from Kafka to process.
 func (cg *ConsumerGroup) Errors() <-chan *sarama.ConsumerError {
 	return cg.errors
 }
@@ -214,7 +212,7 @@ func (cg *ConsumerGroup) topicListConsumer(topics []string) {
 		cg.Logf("Currently registered consumers: %d", len(cg.consumers))
 
 		topicConsumerStopper := make(chan struct{})
-		topicChanges := make(chan struct{}, 1)
+		topicChanges := make(chan struct{})
 
 		for _, topic := range topics {
 			cg.wg.Add(1)
@@ -225,6 +223,7 @@ func (cg *ConsumerGroup) topicListConsumer(topics []string) {
 		select {
 		case <-cg.stopper:
 			close(topicConsumerStopper) // notify all topic consumers stop
+			// cg.Close will call cg.wg.Wait()
 			return
 
 		case <-consumerChanges:
@@ -256,7 +255,7 @@ func (cg *ConsumerGroup) watchTopicChange(topic string, stopper <-chan struct{},
 		return
 
 	case <-topicPartitionChanges:
-		topicChanges <- struct{}{}
+		close(topicChanges)
 	}
 }
 
