@@ -58,6 +58,7 @@ func (zom *zookeeperOffsetManager) InitializePartition(topic string, partition i
 		zom.offsets[topic] = make(topicOffsets)
 	}
 
+	// if not found in zk, nextOffset will be -1
 	nextOffset, err := zom.cg.group.FetchOffset(topic, partition)
 	if err != nil {
 		return 0, err
@@ -161,7 +162,8 @@ func (zom *zookeeperOffsetManager) commitOffset(topic string, partition int32, t
 	})
 
 	if err != nil {
-		zom.cg.Logf("FAILED to commit offset %d for %s/%d!", tracker.highestMarkedAsProcessedOffset, topic, partition)
+		zom.cg.Logf("FAILED to commit offset %d for %s/%d: %v", tracker.highestMarkedAsProcessedOffset,
+			topic, partition, err)
 	} else if zom.config.VerboseLogging {
 		zom.cg.Logf("Committed offset %d for %s/%d!", tracker.lastCommittedOffset, topic, partition)
 	}
