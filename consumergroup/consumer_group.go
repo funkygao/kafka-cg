@@ -149,6 +149,8 @@ func (cg *ConsumerGroup) Closed() bool {
 func (cg *ConsumerGroup) Close() error {
 	shutdownError := AlreadyClosing
 	cg.singleShutdown.Do(func() {
+		cg.Logf("CLOSING")
+
 		defer cg.kazoo.Close()
 
 		shutdownError = nil
