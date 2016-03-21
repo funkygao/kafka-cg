@@ -155,6 +155,7 @@ func (zom *zookeeperOffsetManager) commitOffsets() {
 
 func (zom *zookeeperOffsetManager) commitOffset(topic string, partition int32, tracker *partitionOffsetTracker) error {
 	err := tracker.commit(func(offset int64) error {
+		zom.cg.Logf("zk committing offset %s/%d :: %d", topic, partition, offset)
 		if offset >= 0 {
 			return zom.cg.group.CommitOffset(topic, partition, offset+1)
 		} else {
