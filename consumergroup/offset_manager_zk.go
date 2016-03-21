@@ -80,14 +80,15 @@ func (zom *zookeeperOffsetManager) FinalizePartition(topic string, partition int
 
 	if lastOffset >= 0 {
 		if lastOffset-tracker.highestMarkedAsProcessedOffset > 0 {
-			zom.cg.Logf("%s/%d :: Last processed offset: %d. Waiting up to %ds for another %d messages to process...", topic, partition, tracker.highestMarkedAsProcessedOffset, timeout/time.Second, lastOffset-tracker.highestMarkedAsProcessedOffset)
 			if !tracker.waitForOffset(lastOffset, timeout) {
-				return fmt.Errorf("TIMEOUT waiting for offset %d. Last committed offset: %d", lastOffset, tracker.lastCommittedOffset)
+				zom.cg.Logf("%s/%d :: TIMEOUT %ds waiting for offset %d. Last committed offset: %d",
+					topic, partition, timeout/time.Second, lastOffset,
+					tracker.lastCommittedOffset)
 			}
 		}
 
-		if err := zom.commitOffset(topic, partition, tracker); err != nil {
-			return fmt.Errorf("FAILED to commit offset %d to Zookeeper. Last committed offset: %d", tracker.highestMarkedAsProcessedOffset, tracker.lastCommittedOffset)
+		if err := zom.commitOffset(topic, partition, tracker); err != nil && err != NoOffsetToCommit {
+			return fmt.Errorf("FAILED to commit offset %d to Zookeeper. Last committed offset: %d %v", tracker.highestMarkedAsProcessedOffset, tracker.lastCommittedOffset, err)
 		}
 	}
 
@@ -161,7 +162,7 @@ func (zom *zookeeperOffsetManager) commitOffset(topic string, partition int32, t
 		}
 	})
 
-	if err != nil {
+	if err != nil && err != NoOffsetToCommit {
 		zom.cg.Logf("FAILED to commit offset %d for %s/%d: %v", tracker.highestMarkedAsProcessedOffset,
 			topic, partition, err)
 	} else if zom.config.VerboseLogging {
