@@ -1,7 +1,6 @@
 package consumergroup
 
 import (
-	"errors"
 	"time"
 
 	"github.com/Shopify/sarama"
@@ -52,7 +51,7 @@ func (cgc *Config) Validate() error {
 	}
 
 	if cgc.Offsets.Initial != sarama.OffsetOldest && cgc.Offsets.Initial != sarama.OffsetNewest {
-		return errors.New("Offsets.Initial should be sarama.OffsetOldest or sarama.OffsetNewest.")
+		return ConfigErrorOffset
 	}
 
 	if cgc.Config != nil {

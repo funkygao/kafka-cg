@@ -1,17 +1,12 @@
 package consumergroup
 
 import (
-	"errors"
 	"fmt"
 	"sync"
 	"time"
 
 	"github.com/Shopify/sarama"
 	"github.com/funkygao/kazoo-go"
-)
-
-var (
-	AlreadyClosing = errors.New("The consumer group is already shutting down.")
 )
 
 // The ConsumerGroup type holds all the information for a consumer that is part
@@ -46,7 +41,7 @@ func JoinConsumerGroup(name string, topics []string, zookeeper []string,
 		return nil, sarama.ConfigurationError("No topics provided")
 	}
 	if len(zookeeper) == 0 {
-		return nil, errors.New("You need to provide at least one zookeeper node address")
+		return nil, EmptyZkAddrs
 	}
 
 	if config == nil {
@@ -421,6 +416,7 @@ partitionConsumerLoop:
 
 				case messages <- message:
 					lastOffset = message.Offset
+					cg.offsetManager.MarkAsConsumed(topic, partition, lastOffset)
 					continue partitionConsumerLoop
 				}
 			}

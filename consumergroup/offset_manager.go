@@ -1,7 +1,6 @@
 package consumergroup
 
 import (
-	"errors"
 	"time"
 )
 
@@ -25,6 +24,8 @@ type OffsetManager interface {
 	// offsets that are higehr than the offsets seen before for the same partition.
 	MarkAsProcessed(topic string, partition int32, offset int64) error
 
+	MarkAsConsumed(topic string, partition int32, offset int64) error
+
 	// FinalizePartition is called when the consumergroup is done consuming a
 	// partition. In this method, the offset manager can flush any remaining offsets to its
 	// backend store. It should return an error if it was not able to commit the offset.
@@ -38,13 +39,6 @@ type OffsetManager interface {
 	// offsets. If this doesn't succeed, it should return an error.
 	Close() error
 }
-
-var (
-	UncleanClose           = errors.New("Not all offsets were committed before shutdown was completed")
-	TopicPartitionNotFound = errors.New("Topic partition not found")
-	OffsetBackwardsError   = errors.New("Offset to be committed is smaller than highest processed offset")
-	NoOffsetToCommit       = errors.New("No offsets to commit")
-)
 
 // OffsetManagerConfig holds configuration setting son how the offset manager should behave.
 type OffsetManagerConfig struct {
