@@ -1,7 +1,6 @@
 package consumergroup
 
 import (
-	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -195,8 +194,7 @@ func (pot *partitionOffsetTracker) markAsProcessed(offset int64) error {
 
 	if offset > pot.lastConsumedOffset+1 {
 		// last consumed msg offset=5, but client wants to commit offset=9
-		return errors.New(fmt.Sprintf("Offset to be committed:%d is larger than highest consumed offset:%d",
-			offset, pot.lastConsumedOffset))
+		return OffsetTooLarge
 	} else if offset > pot.highestMarkedAsProcessedOffset {
 		pot.highestMarkedAsProcessedOffset = offset
 		if pot.waitingForOffset == pot.highestMarkedAsProcessedOffset {
