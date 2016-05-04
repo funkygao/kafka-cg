@@ -193,7 +193,7 @@ func (pot *partitionOffsetTracker) markAsProcessed(offset int64) error {
 	pot.l.Lock()
 	defer pot.l.Unlock()
 
-	if offset > pot.lastConsumedOffset {
+	if offset > pot.lastConsumedOffset+1 {
 		// last consumed msg offset=5, but client wants to commit offset=9
 		return errors.New(fmt.Sprintf("Offset to be committed:%d is larger than highest consumed offset:%d",
 			offset, pot.lastConsumedOffset))
