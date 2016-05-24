@@ -111,7 +111,8 @@ func JoinConsumerGroup(name string, topics []string, zookeeper []string,
 		}
 	}
 
-	// Register itself with zookeeper
+	// Register itself with zookeeper: consumers/{group}/ids/{instanceId}
+	// This will lead to consumer group rebalance
 	if err := cg.instance.Register(topics); err != nil {
 		cg.Logf("FAILED to register consumer instance: %s", err)
 		return nil, err
@@ -122,7 +123,7 @@ func JoinConsumerGroup(name string, topics []string, zookeeper []string,
 	offsetConfig := OffsetManagerConfig{CommitInterval: config.Offsets.CommitInterval}
 	cg.offsetManager = NewZookeeperOffsetManager(cg, &offsetConfig)
 
-	go cg.topicListConsumer(topics)
+	go cg.consumeTopics(topics)
 
 	return
 }
@@ -191,7 +192,7 @@ func (cg *ConsumerGroup) CommitUpto(message *sarama.ConsumerMessage) error {
 	return cg.offsetManager.MarkAsProcessed(message.Topic, message.Partition, message.Offset)
 }
 
-func (cg *ConsumerGroup) topicListConsumer(topics []string) {
+func (cg *ConsumerGroup) consumeTopics(topics []string) {
 	for {
 		// each loop is a new rebalance process
 
@@ -216,7 +217,7 @@ func (cg *ConsumerGroup) topicListConsumer(topics []string) {
 		for _, topic := range topics {
 			cg.wg.Add(1)
 			go cg.watchTopicChange(topic, topicConsumerStopper, topicChanges)
-			go cg.topicConsumer(topic, cg.messages, cg.errors, topicConsumerStopper)
+			go cg.consumeTopic(topic, cg.messages, cg.errors, topicConsumerStopper)
 		}
 
 		select {
@@ -226,6 +227,7 @@ func (cg *ConsumerGroup) topicListConsumer(topics []string) {
 			return
 
 		case <-consumerChanges:
+			println("hahahhhhhh")
 			// when zk session expires, we need to re-register ephemeral znode
 			//
 			// how to reproduce:
@@ -276,7 +278,7 @@ func (cg *ConsumerGroup) watchTopicChange(topic string, stopper <-chan struct{},
 	}
 }
 
-func (cg *ConsumerGroup) topicConsumer(topic string, messages chan<- *sarama.ConsumerMessage,
+func (cg *ConsumerGroup) consumeTopic(topic string, messages chan<- *sarama.ConsumerMessage,
 	errors chan<- *sarama.ConsumerError, stopper <-chan struct{}) {
 	defer cg.wg.Done()
 
