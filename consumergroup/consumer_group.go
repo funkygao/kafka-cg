@@ -227,7 +227,6 @@ func (cg *ConsumerGroup) consumeTopics(topics []string) {
 			return
 
 		case <-consumerChanges:
-			println("hahahhhhhh")
 			// when zk session expires, we need to re-register ephemeral znode
 			//
 			// how to reproduce:
