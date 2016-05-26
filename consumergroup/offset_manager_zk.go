@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	log "github.com/funkygao/log4go"
 )
 
 type (
@@ -83,7 +85,7 @@ func (zom *zookeeperOffsetManager) FinalizePartition(topic string, partition int
 	if lastOffset >= 0 {
 		if lastOffset-tracker.highestMarkedAsProcessedOffset > 0 {
 			if !tracker.waitForOffset(lastOffset, timeout) {
-				zom.cg.Logf("%s/%d :: TIMEOUT %ds waiting for offset %d. Last committed offset: %d",
+				log.Debug("[%s/%s] %s/%d TIMEOUT %ds waiting for offset %d. Last committed offset: %d", zom.cg.group.Name, zom.cg.ident(),
 					topic, partition, timeout/time.Second, lastOffset,
 					tracker.lastCommittedOffset)
 			}
@@ -168,7 +170,6 @@ func (zom *zookeeperOffsetManager) commitOffsets() {
 
 func (zom *zookeeperOffsetManager) commitOffset(topic string, partition int32, tracker *partitionOffsetTracker) error {
 	err := tracker.commit(func(offset int64) error {
-		zom.cg.Logf("zk committing offset %s/%d :: %d", topic, partition, offset)
 		if offset >= 0 {
 			return zom.cg.group.CommitOffset(topic, partition, offset+1)
 		} else {
@@ -177,10 +178,8 @@ func (zom *zookeeperOffsetManager) commitOffset(topic string, partition int32, t
 	})
 
 	if err != nil && err != NoOffsetToCommit {
-		zom.cg.Logf("FAILED to commit offset %d for %s/%d: %v", tracker.highestMarkedAsProcessedOffset,
-			topic, partition, err)
-	} else if zom.config.VerboseLogging {
-		zom.cg.Logf("Committed offset %d for %s/%d!", tracker.lastCommittedOffset, topic, partition)
+		log.Debug("[%s/%s] %s/%d commit offset %d: %s", zom.cg.group.Name, zom.cg.ident(),
+			topic, partition, tracker.highestMarkedAsProcessedOffset, err)
 	}
 
 	return err
