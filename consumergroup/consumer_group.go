@@ -100,7 +100,7 @@ func JoinConsumerGroup(name string, topics []string, zookeeper []string,
 		_ = kz.Close()
 		return nil, err
 	} else if !exists {
-		log.Trace("[%s/%s] consumer group in zk creating...", cg.group.Name, cg.ident())
+		log.Debug("[%s/%s] consumer group in zk creating...", cg.group.Name, cg.ident())
 
 		if err := cg.group.Create(); err != nil {
 			_ = consumer.Close()
@@ -145,7 +145,7 @@ func (cg *ConsumerGroup) Close() error {
 	cg.singleShutdown.Do(func() {
 		defer cg.kazoo.Close()
 
-		log.Trace("[%s/%s] closing...", cg.group.Name, cg.ident())
+		log.Debug("[%s/%s] closing...", cg.group.Name, cg.ident())
 
 		shutdownError = nil
 
@@ -246,13 +246,13 @@ func (cg *ConsumerGroup) consumeTopics(topics []string) {
 				}
 			}
 
-			log.Trace("[%s/%s] rebalance due to %+v consumer list change",
+			log.Debug("[%s/%s] rebalance due to %+v consumer list change",
 				cg.group.Name, cg.ident(), topics)
 			close(topicConsumerStopper) // notify all topic consumers stop
 			cg.wg.Wait()                // wait for all topic consumers finish
 
 		case <-topicChanges:
-			log.Trace("[%s/%s] rebalance due to topic %+v change",
+			log.Debug("[%s/%s] rebalance due to topic %+v change",
 				cg.group.Name, cg.ident(), topics)
 			close(topicConsumerStopper) // notify all topic consumers stop
 			cg.wg.Wait()                // wait for all topic consumers finish
