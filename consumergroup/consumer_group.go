@@ -238,18 +238,22 @@ func (cg *ConsumerGroup) consumeTopics(topics []string) {
 			} else if !registered {
 				err = cg.instance.Register(topics)
 				if err != nil {
-					log.Error("[%s/%s] register consumer instance: %s", cg.group.Name, cg.ident(), err)
+					log.Error("[%s/%s] register consumer instance for %+v: %s",
+						cg.group.Name, cg.ident(), topics, err)
 				} else {
-					log.Warn("[%s/%s] re-registered consumer instance", cg.group.Name, cg.ident())
+					log.Warn("[%s/%s] re-registered consumer instance for %+v",
+						cg.group.Name, cg.ident(), topics)
 				}
 			}
 
-			log.Trace("[%s/%s] rebalance due to consumer list change", cg.group.Name, cg.ident())
+			log.Trace("[%s/%s] rebalance due to %+v consumer list change",
+				cg.group.Name, cg.ident(), topics)
 			close(topicConsumerStopper) // notify all topic consumers stop
 			cg.wg.Wait()                // wait for all topic consumers finish
 
 		case <-topicChanges:
-			log.Trace("[%s/%s] rebalance due to topic %+v change", cg.group.Name, cg.ident(), topics)
+			log.Trace("[%s/%s] rebalance due to topic %+v change",
+				cg.group.Name, cg.ident(), topics)
 			close(topicConsumerStopper) // notify all topic consumers stop
 			cg.wg.Wait()                // wait for all topic consumers finish
 		}
@@ -287,7 +291,7 @@ func (cg *ConsumerGroup) consumeTopic(topic string, messages chan<- *sarama.Cons
 	default:
 	}
 
-	log.Debug("[%s/%s] start consuming topic: %s", cg.group.Name, cg.ident(), topic)
+	log.Debug("[%s/%s] try consuming topic: %s", cg.group.Name, cg.ident(), topic)
 
 	partitions, err := cg.kazoo.Topic(topic).Partitions()
 	if err != nil {
