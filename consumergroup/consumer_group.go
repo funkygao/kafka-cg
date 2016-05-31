@@ -321,6 +321,20 @@ func (cg *ConsumerGroup) consumeTopic(topic string, messages chan<- *sarama.Cons
 	log.Debug("[%s/%s] topic %s claiming %d of %d partitions", cg.group.Name, cg.ident(),
 		topic, len(myPartitions), len(partitionLeaders))
 
+	if len(myPartitions) == 0 {
+		consumers := make([]string, 0, len(cg.consumers))
+		partitions := make([]int32, 0, len(partitionLeaders))
+		for _, c := range cg.consumers {
+			consumers = append(consumers, c.ID)
+		}
+		for _, p := range partitionLeaders {
+			partitions = append(partitions, p.id)
+		}
+
+		log.Debug("[%s/%s] topic %s will standby, {C:%+v, P:%+v}",
+			cg.group.Name, cg.ident(), topic, consumers, partitions)
+	}
+
 	// Consume all the assigned partitions
 	var wg sync.WaitGroup
 	for _, partition := range myPartitions {
