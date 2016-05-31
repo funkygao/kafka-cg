@@ -114,7 +114,8 @@ func JoinConsumerGroup(name string, topics []string, zookeeper []string,
 	if err := cg.instance.Register(topics); err != nil {
 		return nil, err
 	} else {
-		log.Debug("[%s/%s] consumer instance registered in zk", cg.group.Name, cg.ident())
+		log.Debug("[%s/%s] consumer instance registered in zk for %+v", cg.group.Name,
+			cg.ident(), topics)
 	}
 
 	offsetConfig := OffsetManagerConfig{CommitInterval: config.Offsets.CommitInterval}
