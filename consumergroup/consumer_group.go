@@ -157,9 +157,9 @@ func (cg *ConsumerGroup) Close() error {
 		}
 
 		if shutdownError = cg.instance.Deregister(); shutdownError != nil {
-			log.Error("[%s/%s] deregister consumer instance: %s", cg.group.Name, cg.ident(), shutdownError)
+			log.Error("[%s/%s] de-register consumer instance: %s", cg.group.Name, cg.ident(), shutdownError)
 		} else {
-			log.Debug("[%s/%s] deregistered consumer instance", cg.group.Name, cg.ident())
+			log.Debug("[%s/%s] de-registered consumer instance", cg.group.Name, cg.ident())
 		}
 
 		if shutdownError = cg.consumer.Close(); shutdownError != nil {
@@ -168,9 +168,10 @@ func (cg *ConsumerGroup) Close() error {
 
 		close(cg.messages)
 		close(cg.errors)
-		cg.instance = nil
 
 		log.Debug("[%s/%s] closed", cg.group.Name, cg.ident())
+
+		cg.instance = nil
 	})
 
 	return shutdownError
