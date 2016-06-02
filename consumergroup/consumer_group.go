@@ -368,7 +368,10 @@ func (cg *ConsumerGroup) consumePartition(topic string, partition int32, message
 			return
 		}
 	}
-	defer cg.instance.ReleasePartition(topic, partition)
+	defer func() {
+		log.Debug("[%s/%s] %s/%d de-claiming owner", cg.group.Name, cg.ident(), topic, partition)
+		cg.instance.ReleasePartition(topic, partition)
+	}()
 
 	nextOffset, err := cg.offsetManager.InitializePartition(topic, partition)
 	if err != nil {
@@ -394,12 +397,16 @@ func (cg *ConsumerGroup) consumePartition(topic string, partition int32, message
 		// if the configuration specified offsetOldest, then switch to the oldest available offset, else
 		// switch to the newest available offset.
 		if cg.config.Offsets.Initial == sarama.OffsetOldest {
+			log.Warn("[%s/%s] %s/%d O:%d %s, reset to oldest",
+				cg.group.Name, cg.ident(), topic, partition, nextOffset, err)
+
 			nextOffset = sarama.OffsetOldest
-			log.Warn("[%s/%s] %s/%d %s, reset to oldest", cg.group.Name, cg.ident(), topic, partition, err)
 		} else {
 			// even when user specifies initial offset, it is reset to newest
+			log.Warn("[%s/%s] %s/%d O:%d %s, reset to newest",
+				cg.group.Name, cg.ident(), topic, partition, nextOffset, err)
+
 			nextOffset = sarama.OffsetNewest
-			log.Warn("[%s/%s] %s/%d %s, reset to newest", cg.group.Name, cg.ident(), topic, partition, err)
 		}
 
 		// retry the consumePartition with the adjusted offset
