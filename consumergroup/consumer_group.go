@@ -332,7 +332,7 @@ func (cg *ConsumerGroup) consumeTopic(topic string, messages chan<- *sarama.Cons
 			partitions = append(partitions, p.id)
 		}
 
-		log.Debug("[%s/%s] topic %s will standby, {C:%+v, P:%+v}",
+		log.Trace("[%s/%s] topic %s will standby, {C:%+v, P:%+v}",
 			cg.group.Name, cg.shortID(), topic, consumers, partitions)
 	}
 
