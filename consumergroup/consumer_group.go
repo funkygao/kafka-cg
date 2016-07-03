@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/Shopify/sarama"
+	"github.com/coocood/freecache"
 	"github.com/funkygao/kazoo-go"
 	log "github.com/funkygao/log4go"
 )
@@ -29,6 +30,7 @@ type ConsumerGroup struct {
 	stopper  chan struct{}
 
 	offsetManager OffsetManager
+	cacher        *freecache.Cache
 }
 
 // Connects to a consumer group, using Zookeeper for auto-discovery
@@ -92,6 +94,9 @@ func JoinConsumerGroup(name string, topics []string, zookeeper []string,
 		messages: make(chan *sarama.ConsumerMessage, config.ChannelBufferSize),
 		errors:   make(chan *sarama.ConsumerError, config.ChannelBufferSize),
 		stopper:  make(chan struct{}),
+	}
+	if config.NoDup {
+		cg.cacher = freecache.NewCache(1 << 20) // TODO
 	}
 
 	// Register consumer group in zookeeper

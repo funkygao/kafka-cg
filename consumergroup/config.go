@@ -28,6 +28,9 @@ type Config struct {
 		// The interval between which the processed offsets are commited.
 		CommitInterval time.Duration
 	}
+
+	// If NoDup is true, consumer group will automatically discard the duplicated message.
+	NoDup bool
 }
 
 func NewConfig() *Config {
@@ -37,6 +40,7 @@ func NewConfig() *Config {
 	config.Offsets.Initial = sarama.OffsetOldest
 	config.Offsets.ProcessingTimeout = 30 * time.Second
 	config.Offsets.CommitInterval = time.Minute
+	config.NoDup = false
 
 	return config
 }
