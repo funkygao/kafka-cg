@@ -241,7 +241,7 @@ func (cg *ConsumerGroup) consumeTopics(topics []string) {
 			registered, err := cg.instance.Registered()
 			if err != nil {
 				log.Error("[%s/%s] %s", cg.group.Name, cg.shortID(), err)
-			} else if !registered {
+			} else if !registered { // this sub instances was killed
 				err = cg.instance.Register(topics)
 				if err != nil {
 					log.Error("[%s/%s] register consumer instance for %+v: %s",
