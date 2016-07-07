@@ -17,6 +17,7 @@ type ConsumerGroup struct {
 
 	consumer sarama.Consumer
 
+	ownZk     bool
 	kazoo     *kazoo.Kazoo
 	group     *kazoo.Consumergroup
 	instance  *kazoo.ConsumergroupInstance
@@ -31,6 +32,94 @@ type ConsumerGroup struct {
 
 	offsetManager OffsetManager
 	cacher        *freecache.Cache
+}
+
+func JoinConsumerGroupFromZk(name string, topics []string, zk *kazoo.Kazoo,
+	config *Config) (cg *ConsumerGroup, err error) {
+	if name == "" {
+		return nil, sarama.ConfigurationError("Empty consumergroup name")
+	}
+	if len(topics) == 0 {
+		return nil, sarama.ConfigurationError("No topics provided")
+	}
+	if zk == nil {
+		return nil, sarama.ConfigurationError("No zk conn provided")
+	}
+
+	if config == nil {
+		config = NewConfig()
+	}
+	config.ClientID = name
+	if err = config.Validate(); err != nil {
+		return
+	}
+
+	var brokers []string
+	brokers, err = zk.BrokerList()
+	if err != nil {
+		return
+	}
+
+	group := zk.Consumergroup(name)
+
+	if config.Offsets.ResetOffsets {
+		err = group.ResetOffsets()
+		if err != nil {
+			return
+		}
+	}
+
+	var consumer sarama.Consumer
+	if consumer, err = sarama.NewConsumer(brokers, config.Config); err != nil {
+		return
+	}
+
+	instance := group.NewInstance()
+	cg = &ConsumerGroup{
+		config:   config,
+		consumer: consumer,
+
+		ownZk:    false,
+		kazoo:    zk,
+		group:    group,
+		instance: instance,
+
+		messages: make(chan *sarama.ConsumerMessage, config.ChannelBufferSize),
+		errors:   make(chan *sarama.ConsumerError, config.ChannelBufferSize),
+		stopper:  make(chan struct{}),
+	}
+	if config.NoDup {
+		cg.cacher = freecache.NewCache(1 << 20) // TODO
+	}
+
+	// Register consumer group in zookeeper
+	if exists, err := cg.group.Exists(); err != nil {
+		_ = consumer.Close()
+		return nil, err
+	} else if !exists {
+		log.Debug("[%s/%s] consumer group in zk creating...", cg.group.Name, cg.shortID())
+
+		if err := cg.group.Create(); err != nil {
+			_ = consumer.Close()
+			return nil, err
+		}
+	}
+
+	// Register itself with zookeeper: consumers/{group}/ids/{instanceId}
+	// This will lead to consumer group rebalance
+	if err := cg.instance.Register(topics); err != nil {
+		return nil, err
+	} else {
+		log.Debug("[%s/%s] consumer instance registered in zk for %+v", cg.group.Name,
+			cg.shortID(), topics)
+	}
+
+	offsetConfig := OffsetManagerConfig{CommitInterval: config.Offsets.CommitInterval}
+	cg.offsetManager = NewZookeeperOffsetManager(cg, &offsetConfig)
+
+	go cg.consumeTopics(topics)
+
+	return
 }
 
 // Connects to a consumer group, using Zookeeper for auto-discovery
@@ -87,6 +176,7 @@ func JoinConsumerGroup(name string, topics []string, zookeeper []string,
 		config:   config,
 		consumer: consumer,
 
+		ownZk:    true,
 		kazoo:    kz,
 		group:    group,
 		instance: instance,
@@ -148,7 +238,9 @@ func (cg *ConsumerGroup) Closed() bool {
 func (cg *ConsumerGroup) Close() error {
 	shutdownError := AlreadyClosing
 	cg.singleShutdown.Do(func() {
-		defer cg.kazoo.Close()
+		if cg.ownZk {
+			defer cg.kazoo.Close()
+		}
 
 		log.Debug("[%s/%s] closing...", cg.group.Name, cg.shortID())
 
