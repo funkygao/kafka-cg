@@ -250,6 +250,7 @@ func (cg *ConsumerGroup) Close() error {
 		cg.wg.Wait()
 
 		if err := cg.offsetManager.Close(); err != nil {
+			// e,g. Not all offsets were committed before shutdown was completed
 			log.Error("[%s/%s] closing offset manager: %s", cg.group.Name, cg.shortID(), err)
 		}
 
@@ -512,6 +513,10 @@ func (cg *ConsumerGroup) consumePartition(topic string, partition int32, message
 	}
 	if err != nil {
 		// FIXME err chan?
+		// e,g. In the middle of a leadership election
+		// e,g. Tried to send a message to a replica that is not the leader for some partition. Your metadata is out of date
+		// e,g. Request was for a topic or partition that does not exist on this broker
+		// e,g. dial tcp 10.209.18.65:11005: getsockopt: connection refused
 		log.Error("[%s/%s] %s/%d: %s", cg.group.Name, cg.shortID(), topic, partition, err)
 		return
 	}
