@@ -222,7 +222,7 @@ func JoinConsumerGroup(name string, topics []string, zookeeper []string,
 }
 
 func (cg *ConsumerGroup) Name() string {
-	return cg.config.ClientID
+	return cg.group.Name
 }
 
 // Returns a channel that you can read to obtain events from Kafka to process.
