@@ -110,8 +110,7 @@ func JoinConsumerGroupFromZk(name string, topics []string, zk *kazoo.Kazoo,
 	if err := cg.instance.Register(topics); err != nil {
 		return nil, err
 	} else {
-		log.Debug("[%s/%s] consumer instance registered in zk for %+v", cg.group.Name,
-			cg.shortID(), topics)
+		log.Debug("[%s/%s] consumer instance registered in zk for %+v", cg.group.Name, cg.shortID(), topics)
 	}
 
 	offsetConfig := OffsetManagerConfig{CommitInterval: config.Offsets.CommitInterval}
@@ -209,8 +208,7 @@ func JoinConsumerGroup(name string, topics []string, zookeeper []string,
 	if err := cg.instance.Register(topics); err != nil {
 		return nil, err
 	} else {
-		log.Debug("[%s/%s] consumer instance registered in zk for %+v", cg.group.Name,
-			cg.shortID(), topics)
+		log.Debug("[%s/%s] consumer instance registered in zk for %+v", cg.group.Name, cg.shortID(), topics)
 	}
 
 	offsetConfig := OffsetManagerConfig{CommitInterval: config.Offsets.CommitInterval}
@@ -341,16 +339,13 @@ func (cg *ConsumerGroup) consumeTopics(topics []string) {
 			} else if !registered { // this sub instances was killed
 				err = cg.instance.Register(topics)
 				if err != nil {
-					log.Error("[%s/%s] register consumer instance for %+v: %s",
-						cg.group.Name, cg.shortID(), topics, err)
+					log.Error("[%s/%s] register consumer instance for %+v: %s", cg.group.Name, cg.shortID(), topics, err)
 				} else {
-					log.Warn("[%s/%s] re-registered consumer instance for %+v",
-						cg.group.Name, cg.shortID(), topics)
+					log.Warn("[%s/%s] re-registered consumer instance for %+v", cg.group.Name, cg.shortID(), topics)
 				}
 			}
 
-			log.Debug("[%s/%s] rebalance due to %+v consumer list change",
-				cg.group.Name, cg.shortID(), topics)
+			log.Debug("[%s/%s] rebalance due to %+v consumer list change", cg.group.Name, cg.shortID(), topics)
 			close(topicConsumerStopper) // notify all topic consumers stop
 			cg.wg.Wait()                // wait for all topic consumers finish
 
@@ -399,7 +394,7 @@ func (cg *ConsumerGroup) consumeTopic(topic string, messages chan<- *sarama.Cons
 	partitions, err := cg.kazoo.Topic(topic).Partitions()
 	if err != nil {
 		log.Error("[%s/%s] get topic %s partitions: %s", cg.group.Name, cg.shortID(), topic, err)
-		cg.errors <- &sarama.ConsumerError{
+		cg.errors <- &sarama.ConsumerError{ // FIXME what if receiver blocked?
 			Topic:     topic,
 			Partition: -1,
 			Err:       err,
@@ -434,8 +429,7 @@ func (cg *ConsumerGroup) consumeTopic(topic string, messages chan<- *sarama.Cons
 			partitions = append(partitions, p.id)
 		}
 
-		log.Trace("[%s/%s] topic %s will standby, {C:%+v, P:%+v}",
-			cg.group.Name, cg.shortID(), topic, consumers, partitions)
+		log.Trace("[%s/%s] topic %s will standby, {C:%+v, P:%+v}", cg.group.Name, cg.shortID(), topic, consumers, partitions)
 	}
 
 	// Consume all the assigned partitions
@@ -478,8 +472,7 @@ func (cg *ConsumerGroup) consumePartition(topic string, partition int32, message
 
 	nextOffset, err := cg.offsetManager.InitializePartition(topic, partition)
 	if err != nil {
-		log.Error("[%s/%s] %s/%d determine initial offset: %s", cg.group.Name, cg.shortID(),
-			topic, partition, err)
+		log.Error("[%s/%s] %s/%d determine initial offset: %s", cg.group.Name, cg.shortID(), topic, partition, err)
 		return
 	}
 
@@ -500,14 +493,12 @@ func (cg *ConsumerGroup) consumePartition(topic string, partition int32, message
 		// if the configuration specified offsetOldest, then switch to the oldest available offset, else
 		// switch to the newest available offset.
 		if cg.config.Offsets.Initial == sarama.OffsetOldest {
-			log.Warn("[%s/%s] %s/%d O:%d %s, reset to oldest",
-				cg.group.Name, cg.shortID(), topic, partition, nextOffset, err)
+			log.Warn("[%s/%s] %s/%d O:%d %s, reset to oldest", cg.group.Name, cg.shortID(), topic, partition, nextOffset, err)
 
 			nextOffset = sarama.OffsetOldest
 		} else {
 			// even when user specifies initial offset, it is reset to newest
-			log.Warn("[%s/%s] %s/%d O:%d %s, reset to newest",
-				cg.group.Name, cg.shortID(), topic, partition, nextOffset, err)
+			log.Warn("[%s/%s] %s/%d O:%d %s, reset to newest", cg.group.Name, cg.shortID(), topic, partition, nextOffset, err)
 
 			nextOffset = sarama.OffsetNewest
 		}
