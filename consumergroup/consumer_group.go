@@ -399,7 +399,7 @@ func (cg *ConsumerGroup) consumeTopic(topic string, messages chan<- *sarama.Cons
 
 	partitions, err := cg.kazoo.Topic(topic).Partitions()
 	if err != nil {
-		log.Error("[%s/%s] get topic %s partitions: %s", cg.group.Name, cg.shortID(), topic, err)
+		log.Error("[%s/%s] topic %s: %s", cg.group.Name, cg.shortID(), topic, err)
 		cg.errors <- &sarama.ConsumerError{ // FIXME what if receiver blocked?
 			Topic:     topic,
 			Partition: -1,
