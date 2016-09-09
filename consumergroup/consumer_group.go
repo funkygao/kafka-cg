@@ -246,10 +246,6 @@ func (cg *ConsumerGroup) Closed() bool {
 func (cg *ConsumerGroup) Close() error {
 	shutdownError := AlreadyClosing
 	cg.singleShutdown.Do(func() {
-		if cg.ownZk {
-			defer cg.kazoo.Close()
-		}
-
 		log.Debug("[%s/%s] closing...", cg.group.Name, cg.shortID())
 
 		shutdownError = nil
@@ -278,6 +274,9 @@ func (cg *ConsumerGroup) Close() error {
 		log.Debug("[%s/%s] closed", cg.group.Name, cg.shortID())
 
 		cg.instance = nil
+		if cg.ownZk {
+			cg.kazoo.Close()
+		}
 	})
 
 	return shutdownError
@@ -323,7 +322,7 @@ func (cg *ConsumerGroup) consumeTopics(topics []string) {
 		for _, topic := range topics {
 			cg.wg.Add(1)
 			go cg.watchTopicChange(topic, topicConsumerStopper, topicChanges)
-			go cg.consumeTopic(topic, cg.messages, cg.errors, topicConsumerStopper)
+			go cg.consumeTopic(topic, topicConsumerStopper)
 		}
 
 		select {
@@ -385,8 +384,7 @@ func (cg *ConsumerGroup) watchTopicChange(topic string, stopper <-chan struct{},
 	}
 }
 
-func (cg *ConsumerGroup) consumeTopic(topic string, messages chan<- *sarama.ConsumerMessage,
-	errors chan<- *sarama.ConsumerError, stopper <-chan struct{}) {
+func (cg *ConsumerGroup) consumeTopic(topic string, stopper <-chan struct{}) {
 	defer cg.wg.Done()
 
 	select {
@@ -442,15 +440,14 @@ func (cg *ConsumerGroup) consumeTopic(topic string, messages chan<- *sarama.Cons
 	var wg sync.WaitGroup
 	for _, partition := range myPartitions {
 		wg.Add(1)
-		go cg.consumePartition(topic, partition.ID, messages, errors, &wg, stopper)
+		go cg.consumePartition(topic, partition.ID, &wg, stopper)
 	}
 
 	wg.Wait()
 	log.Debug("[%s/%s] stopped consuming topic: %s", cg.group.Name, cg.shortID(), topic)
 }
 
-func (cg *ConsumerGroup) consumePartition(topic string, partition int32, messages chan<- *sarama.ConsumerMessage,
-	errors chan<- *sarama.ConsumerError, wg *sync.WaitGroup, stopper <-chan struct{}) {
+func (cg *ConsumerGroup) consumePartition(topic string, partition int32, wg *sync.WaitGroup, stopper <-chan struct{}) {
 	defer wg.Done()
 
 	select {
@@ -534,7 +531,7 @@ partitionConsumerLoop:
 		case err := <-consumer.Errors():
 			for {
 				select {
-				case errors <- err:
+				case cg.errors <- err:
 					continue partitionConsumerLoop
 
 				case <-stopper:
@@ -548,7 +545,7 @@ partitionConsumerLoop:
 				case <-stopper:
 					break partitionConsumerLoop
 
-				case messages <- message:
+				case cg.messages <- message:
 					lastOffset = message.Offset
 					cg.offsetManager.MarkAsConsumed(topic, partition, lastOffset)
 					continue partitionConsumerLoop
