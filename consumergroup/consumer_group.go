@@ -17,11 +17,10 @@ type ConsumerGroup struct {
 
 	consumer sarama.Consumer
 
-	ownZk     bool
-	kazoo     *kazoo.Kazoo
-	group     *kazoo.Consumergroup
-	instance  *kazoo.ConsumergroupInstance
-	consumers kazoo.ConsumergroupInstanceList
+	ownZk    bool
+	kazoo    *kazoo.Kazoo
+	group    *kazoo.Consumergroup
+	instance *kazoo.ConsumergroupInstance
 
 	wg             sync.WaitGroup
 	singleShutdown sync.Once
@@ -110,12 +109,13 @@ func JoinConsumerGroupFromZk(name string, topics []string, zk *kazoo.Kazoo,
 	if err := cg.instance.Register(topics); err != nil {
 		return nil, err
 	} else {
-		log.Debug("[%s/%s] consumer instance registered in zk for %+v", cg.group.Name, cg.shortID(), topics)
+		log.Debug("[%s/%s] cg instance registered in zk for %+v", cg.group.Name, cg.shortID(), topics)
 	}
 
 	offsetConfig := OffsetManagerConfig{CommitInterval: config.Offsets.CommitInterval}
 	cg.offsetManager = NewZookeeperOffsetManager(cg, &offsetConfig)
 
+	cg.wg.Add(1)
 	go cg.consumeTopics(topics)
 
 	return
@@ -208,12 +208,13 @@ func JoinConsumerGroupRealIp(realIp string, name string, topics []string, zookee
 	if err := cg.instance.Register(topics); err != nil {
 		return nil, err
 	} else {
-		log.Debug("[%s/%s] consumer instance registered in zk for %+v", cg.group.Name, cg.shortID(), topics)
+		log.Debug("[%s/%s] cg instance registered in zk for %+v", cg.group.Name, cg.shortID(), topics)
 	}
 
 	offsetConfig := OffsetManagerConfig{CommitInterval: config.Offsets.CommitInterval}
 	cg.offsetManager = NewZookeeperOffsetManager(cg, &offsetConfig)
 
+	cg.wg.Add(1)
 	go cg.consumeTopics(topics)
 
 	return
@@ -236,12 +237,12 @@ func (cg *ConsumerGroup) Messages() <-chan *sarama.ConsumerMessage {
 
 func (cg *ConsumerGroup) emitError(err error, topic string, partition int32) {
 	select {
+	case <-cg.stopper:
 	case cg.errors <- &sarama.ConsumerError{
 		Topic:     topic,
 		Partition: partition,
 		Err:       err,
 	}:
-	case <-cg.stopper:
 	default:
 		// ignore
 	}
@@ -251,10 +252,6 @@ func (cg *ConsumerGroup) emitError(err error, topic string, partition int32) {
 // Returns a channel that you can read to obtain errors from Kafka to process.
 func (cg *ConsumerGroup) Errors() <-chan *sarama.ConsumerError {
 	return cg.errors
-}
-
-func (cg *ConsumerGroup) Closed() bool {
-	return cg.instance == nil
 }
 
 func (cg *ConsumerGroup) Close() error {
@@ -273,9 +270,9 @@ func (cg *ConsumerGroup) Close() error {
 		}
 
 		if shutdownError = cg.instance.Deregister(); shutdownError != nil {
-			log.Error("[%s/%s] de-register consumer instance: %s", cg.group.Name, cg.shortID(), shutdownError)
+			log.Error("[%s/%s] de-register cg instance: %s", cg.group.Name, cg.shortID(), shutdownError)
 		} else {
-			log.Debug("[%s/%s] de-registered consumer instance", cg.group.Name, cg.shortID())
+			log.Debug("[%s/%s] de-registered cg instance", cg.group.Name, cg.shortID())
 		}
 
 		if shutdownError = cg.consumer.Close(); shutdownError != nil {
@@ -312,6 +309,8 @@ func (cg *ConsumerGroup) CommitUpto(message *sarama.ConsumerMessage) error {
 }
 
 func (cg *ConsumerGroup) consumeTopics(topics []string) {
+	defer cg.wg.Done()
+
 	for {
 		// each loop is a new rebalance process
 
@@ -327,21 +326,18 @@ func (cg *ConsumerGroup) consumeTopics(topics []string) {
 			return
 		}
 
-		cg.consumers = consumers
-
 		topicConsumerStopper := make(chan struct{})
 		topicChanges := make(chan struct{})
 
 		for _, topic := range topics {
 			cg.wg.Add(2)
 			go cg.watchTopicChange(topic, topicConsumerStopper, topicChanges)
-			go cg.consumeTopic(topic, topicConsumerStopper)
+			go cg.consumeTopic(topic, consumers, topicConsumerStopper)
 		}
 
 		select {
 		case <-cg.stopper:
 			close(topicConsumerStopper) // notify all topic consumers stop
-			// cg.Close will call cg.wg.Wait()
 			return
 
 		case <-consumerChanges:
@@ -357,21 +353,20 @@ func (cg *ConsumerGroup) consumeTopics(topics []string) {
 			} else if !registered { // this sub instances was killed
 				err = cg.instance.Register(topics)
 				if err != nil {
-					log.Error("[%s/%s] register consumer instance for %+v: %s", cg.group.Name, cg.shortID(), topics, err)
+					log.Error("[%s/%s] register cg instance for %+v: %s", cg.group.Name, cg.shortID(), topics, err)
+					cg.emitError(err, topics[0], -1)
 				} else {
-					log.Warn("[%s/%s] re-registered consumer instance for %+v", cg.group.Name, cg.shortID(), topics)
+					log.Warn("[%s/%s] re-registered cg instance for %+v", cg.group.Name, cg.shortID(), topics)
 				}
 			}
 
-			log.Debug("[%s/%s] rebalance due to %+v consumer list change", cg.group.Name, cg.shortID(), topics)
+			log.Debug("[%s/%s] rebalance due to %+v cg members change", cg.group.Name, cg.shortID(), topics)
 			close(topicConsumerStopper) // notify all topic consumers stop
-			cg.wg.Wait()                // wait for all topic consumers finish
 
 		case <-topicChanges:
 			log.Debug("[%s/%s] rebalance due to topic %+v change",
 				cg.group.Name, cg.shortID(), topics)
 			close(topicConsumerStopper) // notify all topic consumers stop
-			cg.wg.Wait()                // wait for all topic consumers finish
 		}
 	}
 }
@@ -398,7 +393,7 @@ func (cg *ConsumerGroup) watchTopicChange(topic string, stopper <-chan struct{},
 	}
 }
 
-func (cg *ConsumerGroup) consumeTopic(topic string, stopper <-chan struct{}) {
+func (cg *ConsumerGroup) consumeTopic(topic string, consumers kazoo.ConsumergroupInstanceList, stopper <-chan struct{}) {
 	defer cg.wg.Done()
 
 	select {
@@ -423,23 +418,14 @@ func (cg *ConsumerGroup) consumeTopic(topic string, stopper <-chan struct{}) {
 		return
 	}
 
-	dividedPartitions := dividePartitionsBetweenConsumers(cg.consumers, partitionLeaders)
+	dividedPartitions := dividePartitionsBetweenConsumers(consumers, partitionLeaders)
 	myPartitions := dividedPartitions[cg.instance.ID]
 
 	log.Debug("[%s/%s] topic %s claiming %d of %d partitions", cg.group.Name, cg.shortID(),
 		topic, len(myPartitions), len(partitionLeaders))
 
 	if len(myPartitions) == 0 {
-		consumers := make([]string, 0, len(cg.consumers))
-		partitions := make([]int32, 0, len(partitionLeaders))
-		for _, c := range cg.consumers {
-			consumers = append(consumers, c.ID)
-		}
-		for _, p := range partitionLeaders {
-			partitions = append(partitions, p.id)
-		}
-
-		log.Trace("[%s/%s] topic %s will standby, {C:%+v, P:%+v}", cg.group.Name, cg.shortID(), topic, consumers, partitions)
+		cg.emitError(ErrTooManyConsumers, topic, -1)
 	} else {
 		var wg sync.WaitGroup
 		for _, partition := range myPartitions {
@@ -523,6 +509,7 @@ func (cg *ConsumerGroup) consumePartition(topic string, partition int32, wg *syn
 		// e,g. Tried to send a message to a replica that is not the leader for some partition. Your metadata is out of date
 		// e,g. Request was for a topic or partition that does not exist on this broker
 		// e,g. dial tcp 10.209.18.65:11005: getsockopt: connection refused
+		cg.emitError(err, topic, partition)
 		log.Error("[%s/%s] %s/%d: %s", cg.group.Name, cg.shortID(), topic, partition, err)
 		return
 	}
