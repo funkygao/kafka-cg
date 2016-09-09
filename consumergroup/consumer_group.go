@@ -20,7 +20,6 @@ type ConsumerGroup struct {
 
 	consumer sarama.Consumer
 
-	ownZk    bool
 	kazoo    *kazoo.Kazoo
 	group    *kazoo.Consumergroup
 	instance *kazoo.ConsumergroupInstance
@@ -90,7 +89,6 @@ func JoinConsumerGroupRealIp(realIp string, name string, topics []string, zookee
 		config:   config,
 		consumer: consumer,
 
-		ownZk:    true,
 		kazoo:    kz,
 		group:    group,
 		instance: instance,
@@ -200,9 +198,7 @@ func (cg *ConsumerGroup) Close() error {
 		log.Debug("[%s/%s] closed", cg.group.Name, cg.shortID())
 
 		cg.instance = nil
-		if cg.ownZk {
-			cg.kazoo.Close()
-		}
+		cg.kazoo.Close()
 	})
 
 	return shutdownError
