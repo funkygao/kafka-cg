@@ -12,6 +12,9 @@ import (
 
 // The ConsumerGroup type holds all the information for a consumer that is part
 // of a consumer group. Call JoinConsumerGroup to start a consumer.
+//
+// You must call Close() on a consumer group to avoid leaks, it may not be
+// garbage-collected automatically when it passes out of scope.
 type ConsumerGroup struct {
 	config *Config
 
