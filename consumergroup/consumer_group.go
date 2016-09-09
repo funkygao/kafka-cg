@@ -85,7 +85,7 @@ func JoinConsumerGroupFromZk(name string, topics []string, zk *kazoo.Kazoo,
 		instance: instance,
 
 		messages: make(chan *sarama.ConsumerMessage, config.ChannelBufferSize),
-		errors:   make(chan *sarama.ConsumerError, config.ChannelBufferSize),
+		errors:   make(chan *sarama.ConsumerError, 10),
 		stopper:  make(chan struct{}),
 	}
 	if config.NoDup {
@@ -234,6 +234,20 @@ func (cg *ConsumerGroup) Messages() <-chan *sarama.ConsumerMessage {
 	return cg.messages
 }
 
+func (cg *ConsumerGroup) emitError(err error, topic string, partition int32) {
+	select {
+	case cg.errors <- &sarama.ConsumerError{
+		Topic:     topic,
+		Partition: partition,
+		Err:       err,
+	}:
+	case <-cg.stopper:
+	default:
+		// ignore
+	}
+
+}
+
 // Returns a channel that you can read to obtain errors from Kafka to process.
 func (cg *ConsumerGroup) Errors() <-chan *sarama.ConsumerError {
 	return cg.errors
@@ -309,8 +323,7 @@ func (cg *ConsumerGroup) consumeTopics(topics []string) {
 
 		consumers, consumerChanges, err := cg.group.WatchInstances()
 		if err != nil {
-			// FIXME write to err chan?
-			log.Error("[%s/%s] watch consumer instances: %s", cg.group.Name, cg.shortID(), err)
+			cg.emitError(err, topics[0], -1)
 			return
 		}
 
@@ -320,7 +333,7 @@ func (cg *ConsumerGroup) consumeTopics(topics []string) {
 		topicChanges := make(chan struct{})
 
 		for _, topic := range topics {
-			cg.wg.Add(1)
+			cg.wg.Add(2)
 			go cg.watchTopicChange(topic, topicConsumerStopper, topicChanges)
 			go cg.consumeTopic(topic, topicConsumerStopper)
 		}
@@ -365,10 +378,11 @@ func (cg *ConsumerGroup) consumeTopics(topics []string) {
 
 // watchTopicChange watch partition changes on a topic.
 func (cg *ConsumerGroup) watchTopicChange(topic string, stopper <-chan struct{}, topicChanges chan<- struct{}) {
+	defer cg.wg.Done()
+
 	_, topicPartitionChanges, err := cg.kazoo.Topic(topic).WatchPartitions()
 	if err != nil {
-		log.Error("[%s/%s] topic %s: %s", cg.group.Name, cg.shortID(), topic, err)
-		// FIXME err chan?
+		cg.emitError(err, topic, -1)
 		return
 	}
 
@@ -395,27 +409,17 @@ func (cg *ConsumerGroup) consumeTopic(topic string, stopper <-chan struct{}) {
 	default:
 	}
 
-	log.Debug("[%s/%s] try consuming topic: %s", cg.group.Name, cg.shortID(), topic)
-
 	partitions, err := cg.kazoo.Topic(topic).Partitions()
 	if err != nil {
 		log.Error("[%s/%s] topic %s: %s", cg.group.Name, cg.shortID(), topic, err)
-		cg.errors <- &sarama.ConsumerError{ // FIXME what if receiver blocked?
-			Topic:     topic,
-			Partition: -1,
-			Err:       err,
-		}
+		cg.emitError(err, topic, -1)
 		return
 	}
 
 	partitionLeaders, err := retrievePartitionLeaders(partitions)
 	if err != nil {
 		log.Error("[%s/%s] get leader broker of topic %s partitions: %s", cg.group.Name, cg.shortID(), topic, err)
-		cg.errors <- &sarama.ConsumerError{
-			Topic:     topic,
-			Partition: -1,
-			Err:       err,
-		}
+		cg.emitError(err, topic, -1)
 		return
 	}
 
@@ -436,16 +440,16 @@ func (cg *ConsumerGroup) consumeTopic(topic string, stopper <-chan struct{}) {
 		}
 
 		log.Trace("[%s/%s] topic %s will standby, {C:%+v, P:%+v}", cg.group.Name, cg.shortID(), topic, consumers, partitions)
+	} else {
+		var wg sync.WaitGroup
+		for _, partition := range myPartitions {
+			wg.Add(1)
+			go cg.consumePartition(topic, partition.ID, &wg, stopper)
+		}
+
+		wg.Wait()
 	}
 
-	// Consume all the assigned partitions
-	var wg sync.WaitGroup
-	for _, partition := range myPartitions {
-		wg.Add(1)
-		go cg.consumePartition(topic, partition.ID, &wg, stopper)
-	}
-
-	wg.Wait()
 	log.Debug("[%s/%s] stopped consuming topic: %s", cg.group.Name, cg.shortID(), topic)
 }
 
@@ -467,7 +471,7 @@ func (cg *ConsumerGroup) consumePartition(topic string, partition int32, wg *syn
 		} else if err == kazoo.ErrPartitionClaimedByOther && tries+1 < maxRetries {
 			time.Sleep(1 * time.Second)
 		} else {
-			// FIXME err chan?
+			cg.emitError(err, topic, partition)
 			log.Error("[%s/%s] claim %s/%d: %s", cg.group.Name, cg.shortID(), topic, partition, err)
 			return
 		}
