@@ -337,8 +337,8 @@ func (cg *ConsumerGroup) consumeTopic(topic string, consumers kazoo.Consumergrou
 			for _, p := range partitionLeaders {
 				partitionIDs = append(partitionIDs, p.id)
 			}
-			log.Trace("[%s/%s] topic[%s] will standby {C:%+v, P:%+v}", cg.group.Name, cg.shortID(), topic,
-				consumerIDs, partitionIDs)
+			log.Trace("[%s/%s] topic[%s] will standby {C:%d/%+v, P:%+v}", cg.group.Name, cg.shortID(), topic,
+				len(consumerIDs), consumerIDs, partitionIDs)
 		}
 	} else {
 		// kafka lazy connect
