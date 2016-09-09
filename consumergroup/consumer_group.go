@@ -428,7 +428,21 @@ func (cg *ConsumerGroup) consumeTopic(topic string, consumers kazoo.Consumergrou
 		topic, len(myPartitions), len(partitionLeaders))
 
 	if len(myPartitions) == 0 {
-		cg.emitError(ErrTooManyConsumers, topic, -1)
+		if !cg.config.PermitStandby {
+			cg.emitError(ErrTooManyConsumers, topic, -1)
+		} else {
+			// wait for rebalance chance
+			consumerIDs := make([]string, 0, len(consumers))
+			partitionIDs := make([]int32, 0, len(partitionLeaders))
+			for _, c := range consumers {
+				consumerIDs = append(consumerIDs, c.ID)
+			}
+			for _, p := range partitionLeaders {
+				partitionIDs = append(partitionIDs, p.id)
+			}
+			log.Trace("[%s/%s] topic[%s] will standby {C:%+v, P:%+v}", cg.group.Name, cg.shortID(), topic,
+				consumerIDs, partitionIDs)
+		}
 	} else {
 		var wg sync.WaitGroup
 		for _, partition := range myPartitions {
