@@ -77,6 +77,7 @@ func JoinConsumerGroupRealIp(realIp string, name string, topics []string, zookee
 		}
 	}
 
+	// TODO lazy connect
 	var consumer sarama.Consumer
 	if consumer, err = sarama.NewConsumer(brokers, config.Config); err != nil {
 		kz.Close()
@@ -150,12 +151,12 @@ func (cg *ConsumerGroup) Messages() <-chan *sarama.ConsumerMessage {
 
 func (cg *ConsumerGroup) emitError(err error, topic string, partition int32) {
 	select {
-	case <-cg.stopper:
 	case cg.errors <- &sarama.ConsumerError{
 		Topic:     topic,
 		Partition: partition,
 		Err:       err,
 	}:
+	case <-cg.stopper:
 	default:
 		// ignore
 	}
@@ -174,8 +175,8 @@ func (cg *ConsumerGroup) Close() error {
 
 		shutdownError = nil
 
-		close(cg.stopper)
-		cg.wg.Wait()
+		close(cg.stopper) // notify all sub-goroutines to stop
+		cg.wg.Wait()      // collect all sub-goroutines
 
 		if err := cg.offsetManager.Close(); err != nil {
 			// e,g. Not all offsets were committed before shutdown was completed
@@ -261,7 +262,8 @@ func (cg *ConsumerGroup) consumeTopics(topics []string) {
 			registered, err := cg.instance.Registered()
 			if err != nil {
 				log.Error("[%s/%s] %s", cg.group.Name, cg.shortID(), err)
-			} else if !registered { // this sub instances was killed
+			} else if !registered {
+				// might be caused by zk session timeout
 				err = cg.instance.Register(topics)
 				if err != nil {
 					log.Error("[%s/%s] register cg instance for %+v: %s", cg.group.Name, cg.shortID(), topics, err)
