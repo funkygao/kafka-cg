@@ -390,6 +390,8 @@ func (cg *ConsumerGroup) consumeTopic(topic string, stopper <-chan struct{}) {
 	select {
 	case <-stopper:
 		return
+	case <-cg.stopper:
+		return
 	default:
 	}
 
@@ -452,6 +454,8 @@ func (cg *ConsumerGroup) consumePartition(topic string, partition int32, wg *syn
 
 	select {
 	case <-stopper:
+		return
+	case <-cg.stopper:
 		return
 	default:
 	}
@@ -526,6 +530,9 @@ partitionConsumerLoop:
 	for {
 		select {
 		case <-stopper:
+			break partitionConsumerLoop
+
+		case <-cg.stopper:
 			break partitionConsumerLoop
 
 		case err := <-consumer.Errors():
