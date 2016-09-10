@@ -248,7 +248,9 @@ func (cg *ConsumerGroup) consumeTopics(topics []string) {
 			// iptables -D  OUTPUT -p tcp -m tcp --dport 2181 -j      # rm rule
 			registered, err := cg.instance.Registered()
 			if err != nil {
+				// e,g. session expires, zk: could not connect to a server
 				log.Error("[%s/%s] %s", cg.group.Name, cg.shortID(), err)
+				cg.emitError(err, topics[0], -1)
 			} else if !registered {
 				// might be caused by zk session timeout
 				err = cg.instance.Register(topics)
@@ -391,10 +393,7 @@ func (cg *ConsumerGroup) consumePartition(topic string, partition int32, wg *syn
 			return
 		}
 	}
-	defer func() {
-		log.Debug("[%s/%s] %s/%d de-claiming owner", cg.group.Name, cg.shortID(), topic, partition)
-		cg.instance.ReleasePartition(topic, partition)
-	}()
+	defer cg.instance.ReleasePartition(topic, partition)
 
 	nextOffset, err := cg.offsetManager.InitializePartition(topic, partition)
 	if err != nil {
