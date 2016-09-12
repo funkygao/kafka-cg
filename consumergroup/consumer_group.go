@@ -258,7 +258,7 @@ func (cg *ConsumerGroup) consumeTopics(topics []string) {
 					log.Error("[%s/%s] register cg instance for %+v: %s", cg.group.Name, cg.shortID(), topics, err)
 					cg.emitError(err, topics[0], -1)
 				} else {
-					log.Warn("[%s/%s] re-registered cg instance for %+v", cg.group.Name, cg.shortID(), topics)
+					log.Info("[%s/%s] re-registered cg instance for %+v", cg.group.Name, cg.shortID(), topics)
 				}
 			}
 
