@@ -31,6 +31,10 @@ type Config struct {
 
 	// If NoDup is true, consumer group will automatically discard the duplicated message.
 	NoDup bool
+
+	// If not PermitStandby, consumer group will emit ErrTooManyConsumers through error channel
+	// to let client close the consumer group.
+	PermitStandby bool
 }
 
 func NewConfig() *Config {
