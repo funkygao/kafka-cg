@@ -8,6 +8,7 @@ import (
 	"github.com/coocood/freecache"
 	"github.com/funkygao/kazoo-go"
 	log "github.com/funkygao/log4go"
+	"github.com/samuel/go-zookeeper/zk"
 )
 
 // The ConsumerGroup type holds all the information for a consumer that is part
@@ -279,6 +280,10 @@ func (cg *ConsumerGroup) watchTopicChange(topic string, stopper <-chan struct{},
 
 	_, topicPartitionChanges, err := cg.kazoo.Topic(topic).WatchPartitions()
 	if err != nil {
+		if err == zk.ErrNoNode {
+			err = ErrInvalidTopic
+		}
+		log.Error("[%s/%s] topic[%s] watch partitions: %s", cg.group.Name, cg.shortID(), topic, err)
 		cg.emitError(err, topic, -1)
 		return
 	}
@@ -308,6 +313,9 @@ func (cg *ConsumerGroup) consumeTopic(topic string, consumers kazoo.Consumergrou
 
 	partitions, err := cg.kazoo.Topic(topic).Partitions()
 	if err != nil {
+		if err == zk.ErrNoNode {
+			err = ErrInvalidTopic
+		}
 		log.Error("[%s/%s] topic[%s] get partitions: %s", cg.group.Name, cg.shortID(), topic, err)
 		cg.emitError(err, topic, -1)
 		return
