@@ -108,6 +108,18 @@ func JoinConsumerGroupRealIp(realIp string, name string, topics []string, zookee
 		log.Debug("[%s/%s] cg instance registered in zk for %+v", cg.group.Name, cg.shortID(), topics)
 	}
 
+	// kafka connect
+	brokers, err := cg.kazoo.BrokerList()
+	if err != nil {
+		return nil, err
+	}
+
+	if consumer, err := sarama.NewConsumer(brokers, cg.config.Config); err != nil {
+		return nil, err
+	} else {
+		cg.consumer = consumer
+	}
+
 	offsetConfig := OffsetManagerConfig{CommitInterval: config.Offsets.CommitInterval}
 	cg.offsetManager = NewZookeeperOffsetManager(cg, &offsetConfig)
 
@@ -329,7 +341,7 @@ func (cg *ConsumerGroup) consumeTopic(topic string, consumers kazoo.Consumergrou
 	}
 
 	decision := dividePartitionsBetweenConsumers(consumers, partitionLeaders)
-	myPartitions := decision[cg.instance.ID]
+	myPartitions := decision[cg.instance.ID] // TODO if myPartitions didn't change, needn't rebalance
 
 	if len(myPartitions) == 0 {
 		if !cg.config.PermitStandby {
@@ -348,21 +360,6 @@ func (cg *ConsumerGroup) consumeTopic(topic string, consumers kazoo.Consumergrou
 				len(consumerIDs), consumerIDs, partitionIDs)
 		}
 	} else {
-		// kafka lazy connect
-		var brokers []string
-		brokers, err := cg.kazoo.BrokerList()
-		if err != nil {
-			cg.emitError(err, topic, -1)
-			return
-		}
-
-		if consumer, err := sarama.NewConsumer(brokers, cg.config.Config); err != nil {
-			cg.emitError(err, topic, -1)
-			return
-		} else {
-			cg.consumer = consumer
-		}
-
 		log.Debug("[%s/%s] topic[%s] claiming %d of %d partitions", cg.group.Name, cg.shortID(),
 			topic, len(myPartitions), len(partitionLeaders))
 
