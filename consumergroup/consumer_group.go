@@ -328,11 +328,8 @@ func (cg *ConsumerGroup) consumeTopic(topic string, consumers kazoo.Consumergrou
 		return
 	}
 
-	dividedPartitions := dividePartitionsBetweenConsumers(consumers, partitionLeaders)
-	myPartitions := dividedPartitions[cg.instance.ID]
-
-	log.Debug("[%s/%s] topic[%s] claiming %d of %d partitions", cg.group.Name, cg.shortID(),
-		topic, len(myPartitions), len(partitionLeaders))
+	decision := dividePartitionsBetweenConsumers(consumers, partitionLeaders)
+	myPartitions := decision[cg.instance.ID]
 
 	if len(myPartitions) == 0 {
 		if !cg.config.PermitStandby {
@@ -366,6 +363,9 @@ func (cg *ConsumerGroup) consumeTopic(topic string, consumers kazoo.Consumergrou
 			cg.consumer = consumer
 		}
 
+		log.Debug("[%s/%s] topic[%s] claiming %d of %d partitions", cg.group.Name, cg.shortID(),
+			topic, len(myPartitions), len(partitionLeaders))
+
 		var wg sync.WaitGroup
 		for _, partition := range myPartitions {
 			wg.Add(1)
@@ -375,7 +375,7 @@ func (cg *ConsumerGroup) consumeTopic(topic string, consumers kazoo.Consumergrou
 		wg.Wait()
 	}
 
-	log.Debug("[%s/%s] stopped consuming topic[%s]", cg.group.Name, cg.shortID(), topic)
+	log.Debug("[%s/%s] stopped consuming topic[%s] %d partitions", cg.group.Name, cg.shortID(), topic, len(myPartitions))
 }
 
 func (cg *ConsumerGroup) consumePartition(topic string, partition int32, wg *sync.WaitGroup, stopper <-chan struct{}) {
