@@ -263,7 +263,9 @@ func (cg *ConsumerGroup) consumeTopics(topics []string) {
 			// iptables -D  OUTPUT -p tcp -m tcp --dport 2181 -j      # rm rule
 			registered, err := cg.instance.Registered()
 			if err != nil {
-				// e,g. session expires, zk: could not connect to a server
+				// e,g. session expires
+				// e,g. zk: could not connect to a server
+				// e,g. zk: connection closed
 				log.Error("[%s/%s] %s", cg.group.Name, cg.shortID(), err)
 				cg.emitError(err, topics[0], -1)
 			} else if !registered {
