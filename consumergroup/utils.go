@@ -24,12 +24,12 @@ func retrievePartitionLeaders(partitions kazoo.PartitionList) (partitionLeaders,
 // Divides a set of partitions between a set of consumers.
 func dividePartitionsBetweenConsumers(consumers kazoo.ConsumergroupInstanceList,
 	partitions partitionLeaders) map[string][]*kazoo.Partition {
-	result := make(map[string][]*kazoo.Partition)
+	decision := make(map[string][]*kazoo.Partition)
 
 	plen := len(partitions)
 	clen := len(consumers)
-	if clen == 0 {
-		return result
+	if clen == 0 || plen == 0 {
+		return decision
 	}
 
 	sort.Sort(partitions)
@@ -49,10 +49,10 @@ func dividePartitionsBetweenConsumers(consumers kazoo.ConsumergroupInstanceList,
 		}
 
 		for _, pl := range partitions[first:last] {
-			result[consumer.ID] = append(result[consumer.ID], pl.partition)
+			decision[consumer.ID] = append(decision[consumer.ID], pl.partition)
 		}
 		p = last
 	}
 
-	return result
+	return decision
 }
