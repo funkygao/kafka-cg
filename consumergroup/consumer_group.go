@@ -152,8 +152,6 @@ func (cg *ConsumerGroup) emitError(err error, topic string, partition int32) {
 		Err:       err,
 	}:
 	case <-cg.stopper:
-	default:
-		// ignore
 	}
 
 }
@@ -171,7 +169,7 @@ func (cg *ConsumerGroup) Close() error {
 		shutdownError = nil
 
 		close(cg.stopper) // notify all sub-goroutines to stop
-		cg.wg.Wait()      // collect all sub-goroutines
+		cg.wg.Wait()      // await cg.consumeTopics() done
 
 		if err := cg.offsetManager.Close(); err != nil {
 			// e,g. Not all offsets were committed before shutdown was completed
@@ -223,6 +221,7 @@ func (cg *ConsumerGroup) CommitUpto(message *sarama.ConsumerMessage) error {
 func (cg *ConsumerGroup) consumeTopics(topics []string) {
 	defer cg.wg.Done()
 
+	var inflight sync.WaitGroup
 	for {
 		// each loop is a new rebalance process
 
@@ -238,20 +237,19 @@ func (cg *ConsumerGroup) consumeTopics(topics []string) {
 			return
 		}
 
-		topicConsumerStopper := make(chan struct{})
-		topicConsumerStopped := make(chan struct{})
+		rebalance := make(chan struct{})
 		topicPartitionsChanged := make(chan string)
 
 		for _, topic := range topics {
-			cg.wg.Add(2)
-			go cg.watchTopicPartitionsChange(topic, topicConsumerStopper, topicPartitionsChanged)
-			go cg.consumeTopic(topic, consumers, topicConsumerStopper, topicConsumerStopped)
+			inflight.Add(2)
+			go cg.watchTopicPartitionsChange(topic, rebalance, topicPartitionsChanged, &inflight)
+			go cg.consumeTopic(topic, consumers, rebalance, &inflight)
 		}
 
 		select {
 		case <-cg.stopper:
-			close(topicConsumerStopper) // notify all topic consumers stop
-			<-topicConsumerStopped      // await all topic consumers being stopped
+			close(rebalance)
+			inflight.Wait()
 			return
 
 		case <-consumerChanges:
@@ -280,22 +278,21 @@ func (cg *ConsumerGroup) consumeTopics(topics []string) {
 			}
 
 			log.Debug("[%s/%s] rebalance due to %+v cg members change", cg.group.Name, cg.shortID(), topics)
-			close(topicConsumerStopper) // notify all topic consumers stop
-			<-topicConsumerStopped      // await all topic consumers being stopped
+			close(rebalance) // notify all topic consumers stop
+			inflight.Wait()
 
 		case topicName := <-topicPartitionsChanged:
 			log.Debug("[%s/%s] rebalance due to topic[%s] partitions change", cg.group.Name, cg.shortID(), topicName)
-			close(topicConsumerStopper) // notify all topic consumers stop
-			<-topicConsumerStopped      // await all topic consumers being stopped
+			close(rebalance) // notify all topic consumers stop
+			inflight.Wait()
 		}
 	}
 }
 
 // watchTopicPartitionsChange watch partition changes on a topic.
-func (cg *ConsumerGroup) watchTopicPartitionsChange(topic string, stopper <-chan struct{}, topicPartitionsChanged chan<- string) {
-	defer cg.wg.Done()
-
-	log.Debug("[%s/%s] topic[%s] watch partitions change", cg.group.Name, cg.shortID(), topic)
+func (cg *ConsumerGroup) watchTopicPartitionsChange(topic string, stopper <-chan struct{},
+	topicPartitionsChanged chan<- string, inflight *sync.WaitGroup) {
+	defer inflight.Done()
 
 	_, ch, err := cg.kazoo.Topic(topic).WatchPartitions()
 	if err != nil {
@@ -323,11 +320,8 @@ func (cg *ConsumerGroup) watchTopicPartitionsChange(topic string, stopper <-chan
 }
 
 func (cg *ConsumerGroup) consumeTopic(topic string, consumers kazoo.ConsumergroupInstanceList,
-	stopper <-chan struct{}, stopped chan<- struct{}) {
-	defer func() {
-		cg.wg.Done()
-		close(stopped)
-	}()
+	stopper <-chan struct{}, inflight *sync.WaitGroup) {
+	defer inflight.Done()
 
 	select {
 	case <-stopper:
@@ -349,11 +343,15 @@ func (cg *ConsumerGroup) consumeTopic(topic string, consumers kazoo.Consumergrou
 
 	partitionLeaders, err := retrievePartitionLeaders(partitions)
 	if err != nil {
-		log.Error("[%s/%s] get leader broker of topic[%s] partitions: %s", cg.group.Name, cg.shortID(), topic, err)
+		// when a topic partition changes, might -> zk: node does not exist
+		log.Error("[%s/%s] get leader broker of topic[%s]: %s", cg.group.Name, cg.shortID(), topic, err)
 		cg.emitError(err, topic, -1)
 		return
 	}
 
+	// FIXME group1@id1 is consuming topic1[p0-5], group1@id2 starts to consume topic2[p0]
+	// for group1@id2, consumers=[group1@id1, group1@id2] partitionLeaders=[p0]
+	// the dicision might be: group1@id2 consumes nothing, which is wrong
 	decision := dividePartitionsBetweenConsumers(consumers, partitionLeaders)
 	myPartitions := decision[cg.instance.ID] // TODO if myPartitions didn't change, needn't rebalance
 
