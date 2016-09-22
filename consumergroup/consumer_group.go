@@ -294,7 +294,7 @@ func (cg *ConsumerGroup) watchTopicPartitionsChange(topic string, stopper <-chan
 	topicPartitionsChanged chan<- string, inflight *sync.WaitGroup) {
 	defer inflight.Done()
 
-	_, ch, err := cg.kazoo.Topic(topic).WatchPartitions()
+	newPartitions, ch, err := cg.kazoo.Topic(topic).WatchPartitions()
 	if err != nil {
 		if err == zk.ErrNoNode {
 			err = ErrInvalidTopic
@@ -312,6 +312,25 @@ func (cg *ConsumerGroup) watchTopicPartitionsChange(topic string, stopper <-chan
 		return
 
 	case <-ch:
+		// when partitions scales up, the zk node might not be completely ready, await it ready
+		//
+		// even if zk node ready, kafka broker might not be ready:
+		// kafka server: Request was for a topic or partition that does not exist on this broker
+		// so we blindly wait 1s: should be enough for most cases
+		// in rare cases, 1s is still not enough
+		// that's ok, just return that err to client to retry
+		time.Sleep(time.Second)
+		for retries := 0; retries < 5; retries++ {
+			if _, err := retrievePartitionLeaders(newPartitions); err == nil {
+				log.Debug("[%s/%s] topic[%s] partitions change complete", cg.group.Name, cg.shortID(), topic)
+				break
+			} else {
+				log.Debug("[%s/%s] topic[%s] partitions change #%d wait complete", cg.group.Name, cg.shortID(), topic)
+				time.Sleep(time.Second * time.Duration(retries))
+			}
+		}
+
+		// safe to trigger rebalance
 		select {
 		case topicPartitionsChanged <- topic:
 		default:
