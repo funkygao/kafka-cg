@@ -240,7 +240,7 @@ func (cg *ConsumerGroup) consumeTopics(topics []string) {
 
 		topicConsumerStopper := make(chan struct{})
 		topicConsumerStopped := make(chan struct{})
-		topicPartitionsChanged := make(chan struct{}) // FIXME might not closed
+		topicPartitionsChanged := make(chan string)
 
 		for _, topic := range topics {
 			cg.wg.Add(2)
@@ -283,8 +283,8 @@ func (cg *ConsumerGroup) consumeTopics(topics []string) {
 			close(topicConsumerStopper) // notify all topic consumers stop
 			<-topicConsumerStopped      // await all topic consumers being stopped
 
-		case <-topicPartitionsChanged:
-			log.Debug("[%s/%s] rebalance due to topic %+v partitions change", cg.group.Name, cg.shortID(), topics)
+		case topicName := <-topicPartitionsChanged:
+			log.Debug("[%s/%s] rebalance due to topic[%s] partitions change", cg.group.Name, cg.shortID(), topicName)
 			close(topicConsumerStopper) // notify all topic consumers stop
 			<-topicConsumerStopped      // await all topic consumers being stopped
 		}
@@ -292,7 +292,7 @@ func (cg *ConsumerGroup) consumeTopics(topics []string) {
 }
 
 // watchTopicPartitionsChange watch partition changes on a topic.
-func (cg *ConsumerGroup) watchTopicPartitionsChange(topic string, stopper <-chan struct{}, topicPartitionsChanged chan<- struct{}) {
+func (cg *ConsumerGroup) watchTopicPartitionsChange(topic string, stopper <-chan struct{}, topicPartitionsChanged chan<- string) {
 	defer cg.wg.Done()
 
 	log.Debug("[%s/%s] topic[%s] watch partitions change", cg.group.Name, cg.shortID(), topic)
@@ -315,7 +315,10 @@ func (cg *ConsumerGroup) watchTopicPartitionsChange(topic string, stopper <-chan
 		return
 
 	case <-ch:
-		close(topicPartitionsChanged)
+		select {
+		case topicPartitionsChanged <- topic:
+		default:
+		}
 	}
 }
 
