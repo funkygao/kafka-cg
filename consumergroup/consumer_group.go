@@ -251,6 +251,7 @@ func (cg *ConsumerGroup) consumeTopics(topics []string) {
 		select {
 		case <-cg.stopper:
 			close(topicConsumerStopper) // notify all topic consumers stop
+			<-topicConsumerStopped      // await all topic consumers being stopped
 			return
 
 		case <-consumerChanges:
