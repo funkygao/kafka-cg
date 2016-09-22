@@ -240,11 +240,11 @@ func (cg *ConsumerGroup) consumeTopics(topics []string) {
 
 		topicConsumerStopper := make(chan struct{})
 		topicConsumerStopped := make(chan struct{})
-		topicChanges := make(chan struct{})
+		topicPartitionsChanged := make(chan struct{}) // FIXME might not closed
 
 		for _, topic := range topics {
 			cg.wg.Add(2)
-			go cg.watchTopicChange(topic, topicConsumerStopper, topicChanges)
+			go cg.watchTopicPartitionsChange(topic, topicConsumerStopper, topicPartitionsChanged)
 			go cg.consumeTopic(topic, consumers, topicConsumerStopper, topicConsumerStopped)
 		}
 
@@ -283,20 +283,21 @@ func (cg *ConsumerGroup) consumeTopics(topics []string) {
 			close(topicConsumerStopper) // notify all topic consumers stop
 			<-topicConsumerStopped      // await all topic consumers being stopped
 
-		case <-topicChanges:
-			log.Debug("[%s/%s] rebalance due to topic %+v change",
-				cg.group.Name, cg.shortID(), topics)
+		case <-topicPartitionsChanged:
+			log.Debug("[%s/%s] rebalance due to topic %+v partitions change", cg.group.Name, cg.shortID(), topics)
 			close(topicConsumerStopper) // notify all topic consumers stop
 			<-topicConsumerStopped      // await all topic consumers being stopped
 		}
 	}
 }
 
-// watchTopicChange watch partition changes on a topic.
-func (cg *ConsumerGroup) watchTopicChange(topic string, stopper <-chan struct{}, topicChanges chan<- struct{}) {
+// watchTopicPartitionsChange watch partition changes on a topic.
+func (cg *ConsumerGroup) watchTopicPartitionsChange(topic string, stopper <-chan struct{}, topicPartitionsChanged chan<- struct{}) {
 	defer cg.wg.Done()
 
-	_, topicPartitionChanges, err := cg.kazoo.Topic(topic).WatchPartitions()
+	log.Debug("[%s/%s] topic[%s] watch partitions change", cg.group.Name, cg.shortID(), topic)
+
+	_, ch, err := cg.kazoo.Topic(topic).WatchPartitions()
 	if err != nil {
 		if err == zk.ErrNoNode {
 			err = ErrInvalidTopic
@@ -313,8 +314,8 @@ func (cg *ConsumerGroup) watchTopicChange(topic string, stopper <-chan struct{},
 	case <-stopper:
 		return
 
-	case <-topicPartitionChanges:
-		close(topicChanges)
+	case <-ch:
+		close(topicPartitionsChanged)
 	}
 }
 
@@ -366,8 +367,8 @@ func (cg *ConsumerGroup) consumeTopic(topic string, consumers kazoo.Consumergrou
 			for _, p := range partitionLeaders {
 				partitionIDs = append(partitionIDs, p.id)
 			}
-			log.Trace("[%s/%s] topic[%s] will standby {C:%d/%+v, P:%+v}", cg.group.Name, cg.shortID(), topic,
-				len(consumerIDs), consumerIDs, partitionIDs)
+			log.Trace("[%s/%s] topic[%s] will standby {C:%d/%+v, P:%+v}", cg.group.Name, cg.shortID(),
+				topic, len(consumerIDs), consumerIDs, partitionIDs)
 		}
 	} else {
 		log.Debug("[%s/%s] topic[%s] claiming %d of %d partitions", cg.group.Name, cg.shortID(),
