@@ -239,12 +239,13 @@ func (cg *ConsumerGroup) consumeTopics(topics []string) {
 		}
 
 		topicConsumerStopper := make(chan struct{})
+		topicConsumerStopped := make(chan struct{})
 		topicChanges := make(chan struct{})
 
 		for _, topic := range topics {
 			cg.wg.Add(2)
 			go cg.watchTopicChange(topic, topicConsumerStopper, topicChanges)
-			go cg.consumeTopic(topic, consumers, topicConsumerStopper)
+			go cg.consumeTopic(topic, consumers, topicConsumerStopper, topicConsumerStopped)
 		}
 
 		select {
@@ -277,11 +278,13 @@ func (cg *ConsumerGroup) consumeTopics(topics []string) {
 
 			log.Debug("[%s/%s] rebalance due to %+v cg members change", cg.group.Name, cg.shortID(), topics)
 			close(topicConsumerStopper) // notify all topic consumers stop
+			<-topicConsumerStopped      // await all topic consumers being stopped
 
 		case <-topicChanges:
 			log.Debug("[%s/%s] rebalance due to topic %+v change",
 				cg.group.Name, cg.shortID(), topics)
 			close(topicConsumerStopper) // notify all topic consumers stop
+			<-topicConsumerStopped      // await all topic consumers being stopped
 		}
 	}
 }
@@ -312,8 +315,12 @@ func (cg *ConsumerGroup) watchTopicChange(topic string, stopper <-chan struct{},
 	}
 }
 
-func (cg *ConsumerGroup) consumeTopic(topic string, consumers kazoo.ConsumergroupInstanceList, stopper <-chan struct{}) {
-	defer cg.wg.Done()
+func (cg *ConsumerGroup) consumeTopic(topic string, consumers kazoo.ConsumergroupInstanceList,
+	stopper <-chan struct{}, stopped chan<- struct{}) {
+	defer func() {
+		cg.wg.Done()
+		close(stopped)
+	}()
 
 	select {
 	case <-stopper:
