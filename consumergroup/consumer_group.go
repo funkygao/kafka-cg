@@ -401,7 +401,12 @@ func (cg *ConsumerGroup) consumePartition(topic string, partition int32, wg *syn
 			log.Debug("[%s/%s] %s/%d claimed owner", cg.group.Name, cg.shortID(), topic, partition)
 			break
 		} else if err == kazoo.ErrPartitionClaimedByOther && tries+1 < maxRetries {
-			time.Sleep(1 * time.Second)
+			time.Sleep(time.Second)
+		} else if err == kazoo.ErrPartitionClaimedByOther {
+			// fail to claim owner after max retries
+			cg.emitError(ErrTooManyConsumers, topic, partition)
+			log.Error("[%s/%s] claim %s/%d: %s", cg.group.Name, cg.shortID(), topic, partition, err)
+			return
 		} else {
 			cg.emitError(err, topic, partition)
 			log.Error("[%s/%s] claim %s/%d: %s", cg.group.Name, cg.shortID(), topic, partition, err)
