@@ -35,6 +35,9 @@ type Config struct {
 	// If not PermitStandby, consumer group will emit ErrTooManyConsumers through error channel
 	// to let client close the consumer group.
 	PermitStandby bool
+
+	// If OneToOne is true, a single consumer group can only consumer a single topic.
+	OneToOne bool
 }
 
 func NewConfig() *Config {
@@ -45,6 +48,7 @@ func NewConfig() *Config {
 	config.Offsets.ProcessingTimeout = 30 * time.Second
 	config.Offsets.CommitInterval = time.Minute
 	config.NoDup = false
+	config.OneToOne = false
 
 	return config
 }
