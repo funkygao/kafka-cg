@@ -363,6 +363,24 @@ func (cg *ConsumerGroup) consumeTopic(topic string, consumers kazoo.Consumergrou
 	default:
 	}
 
+	if cg.config.OneToOne {
+		onlineTopics, err := cg.group.OnlineTopics()
+		if err != nil {
+			log.Error("[%s/%s] topic[%s] get partitions: %s", cg.group.Name, cg.shortID(), topic, err)
+			cg.emitError(err, topic, -1)
+			return
+		}
+
+		for t := range onlineTopics {
+			if topic != t {
+				// there is somebody in my group who is consumer another topic
+				log.Error("[%s/%s] topic[%s] conflicts with topic[%s]", cg.group.Name, cg.shortID(), topic, t)
+				cg.emitError(ErrConsumerConflict, topic, -1)
+				return
+			}
+		}
+	}
+
 	partitions, err := cg.kazoo.Topic(topic).Partitions()
 	if err != nil {
 		if err == zk.ErrNoNode {
