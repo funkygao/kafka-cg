@@ -294,7 +294,7 @@ func (cg *ConsumerGroup) watchTopicPartitionsChange(topic string, stopper <-chan
 	topicPartitionsChanged chan<- string, outstanding *sync.WaitGroup) {
 	defer outstanding.Done()
 
-	newPartitions, ch, err := cg.kazoo.Topic(topic).WatchPartitions()
+	_, ch, err := cg.kazoo.Topic(topic).WatchPartitions()
 	if err != nil {
 		if err == zk.ErrNoNode {
 			err = ErrInvalidTopic
@@ -321,18 +321,24 @@ func (cg *ConsumerGroup) watchTopicPartitionsChange(topic string, stopper <-chan
 		// even if zk node ready, kafka broker might not be ready:
 		// kafka server: Request was for a topic or partition that does not exist on this broker
 		// so we blindly wait: should be enough for most cases
-		// in rare cases, that is still not enough
+		// in rare cases, that is still not enough: imagine partitions 1->1000, which takes long
 		// ok, just return that err to client to retry
 		time.Sleep(time.Second * backoff)
 		for retries := 0; retries < maxRetries; retries++ {
 			// retrieve brokers/topics/{topic}/partitions/{partition}/state and find the leader broker id
 			// the new partitions state znode might not be ready yet
-			if _, err := retrievePartitionLeaders(newPartitions); err == nil {
-				log.Debug("[%s/%s] topic[%s] partitions change complete", cg.group.Name, cg.shortID(), topic)
-				break
+			if partitions, err := cg.kazoo.Topic(topic).Partitions(); err == nil {
+				if _, err = retrievePartitionLeaders(partitions); err == nil {
+					log.Debug("[%s/%s] topic[%s] partitions change complete", cg.group.Name, cg.shortID(), topic)
+					break
+				} else {
+					log.Warn("[%s/%s] topic[%s] partitions change retry#%d waiting: %v", cg.group.Name, cg.shortID(), topic, retries, err)
+					backoff-- // don't worry if negative
+					time.Sleep(time.Second * backoff)
+				}
 			} else {
-				log.Debug("[%s/%s] topic[%s] partitions change #%d wait complete", cg.group.Name, cg.shortID(), topic)
-				backoff-- // don't worry if negative
+				log.Warn("[%s/%s] topic[%s] partitions change retry#%d waiting: %v", cg.group.Name, cg.shortID(), topic, retries, err)
+				backoff--
 				time.Sleep(time.Second * backoff)
 			}
 		}
