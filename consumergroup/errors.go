@@ -15,4 +15,5 @@ var (
 	OffsetTooLarge         = errors.New("Offset to be committed is larger than highest consumed offset")
 	ErrTooManyConsumers    = errors.New("Consumers more than available partitions")
 	ErrInvalidTopic        = errors.New("Invalid topic")
+	ErrConsumerConflict    = errors.New("One group can only consume one topic")
 )
