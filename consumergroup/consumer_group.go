@@ -221,10 +221,13 @@ func (cg *ConsumerGroup) CommitUpto(message *sarama.ConsumerMessage) error {
 func (cg *ConsumerGroup) consumeTopics(topics []string) {
 	defer cg.wg.Done()
 
-	var inflight sync.WaitGroup
-	for {
-		// each loop is a new rebalance process
+	rebalance := func(stopper chan struct{}, wg *sync.WaitGroup) {
+		close(stopper) // notify all outstanding goroutines to stop
+		wg.Wait()      // await them cleanup
+	}
 
+	var outstanding sync.WaitGroup
+	for {
 		select {
 		case <-cg.stopper:
 			return
@@ -237,19 +240,18 @@ func (cg *ConsumerGroup) consumeTopics(topics []string) {
 			return
 		}
 
-		rebalance := make(chan struct{})
-		topicPartitionsChanged := make(chan string)
+		stopper := make(chan struct{})
+		topicPartitionsChanged := make(chan string) // FIXME close it
 
 		for _, topic := range topics {
-			inflight.Add(2)
-			go cg.watchTopicPartitionsChange(topic, rebalance, topicPartitionsChanged, &inflight)
-			go cg.consumeTopic(topic, consumers, rebalance, &inflight)
+			outstanding.Add(2)
+			go cg.watchTopicPartitionsChange(topic, stopper, topicPartitionsChanged, &outstanding)
+			go cg.consumeTopic(topic, consumers, stopper, &outstanding)
 		}
 
 		select {
 		case <-cg.stopper:
-			close(rebalance)
-			inflight.Wait()
+			rebalance(stopper, &outstanding)
 			return
 
 		case <-consumerChanges:
@@ -278,21 +280,19 @@ func (cg *ConsumerGroup) consumeTopics(topics []string) {
 			}
 
 			log.Debug("[%s/%s] rebalance due to %+v cg members change", cg.group.Name, cg.shortID(), topics)
-			close(rebalance) // notify all topic consumers stop
-			inflight.Wait()
+			rebalance(stopper, &outstanding)
 
 		case topicName := <-topicPartitionsChanged:
 			log.Debug("[%s/%s] rebalance due to topic[%s] partitions change", cg.group.Name, cg.shortID(), topicName)
-			close(rebalance) // notify all topic consumers stop
-			inflight.Wait()
+			rebalance(stopper, &outstanding)
 		}
 	}
 }
 
 // watchTopicPartitionsChange watch partition changes on a topic.
 func (cg *ConsumerGroup) watchTopicPartitionsChange(topic string, stopper <-chan struct{},
-	topicPartitionsChanged chan<- string, inflight *sync.WaitGroup) {
-	defer inflight.Done()
+	topicPartitionsChanged chan<- string, outstanding *sync.WaitGroup) {
+	defer outstanding.Done()
 
 	newPartitions, ch, err := cg.kazoo.Topic(topic).WatchPartitions()
 	if err != nil {
@@ -304,6 +304,10 @@ func (cg *ConsumerGroup) watchTopicPartitionsChange(topic string, stopper <-chan
 		return
 	}
 
+	var (
+		backoff    = time.Duration(5)
+		maxRetries = 3
+	)
 	select {
 	case <-cg.stopper:
 		return
@@ -316,17 +320,20 @@ func (cg *ConsumerGroup) watchTopicPartitionsChange(topic string, stopper <-chan
 		//
 		// even if zk node ready, kafka broker might not be ready:
 		// kafka server: Request was for a topic or partition that does not exist on this broker
-		// so we blindly wait 1s: should be enough for most cases
-		// in rare cases, 1s is still not enough
-		// that's ok, just return that err to client to retry
-		time.Sleep(time.Second)
-		for retries := 0; retries < 5; retries++ {
+		// so we blindly wait: should be enough for most cases
+		// in rare cases, that is still not enough
+		// ok, just return that err to client to retry
+		time.Sleep(time.Second * backoff)
+		for retries := 0; retries < maxRetries; retries++ {
+			// retrieve brokers/topics/{topic}/partitions/{partition}/state and find the leader broker id
+			// the new partitions state znode might not be ready yet
 			if _, err := retrievePartitionLeaders(newPartitions); err == nil {
 				log.Debug("[%s/%s] topic[%s] partitions change complete", cg.group.Name, cg.shortID(), topic)
 				break
 			} else {
 				log.Debug("[%s/%s] topic[%s] partitions change #%d wait complete", cg.group.Name, cg.shortID(), topic)
-				time.Sleep(time.Second * time.Duration(retries))
+				backoff-- // don't worry if negative
+				time.Sleep(time.Second * backoff)
 			}
 		}
 
@@ -339,8 +346,8 @@ func (cg *ConsumerGroup) watchTopicPartitionsChange(topic string, stopper <-chan
 }
 
 func (cg *ConsumerGroup) consumeTopic(topic string, consumers kazoo.ConsumergroupInstanceList,
-	stopper <-chan struct{}, inflight *sync.WaitGroup) {
-	defer inflight.Done()
+	stopper <-chan struct{}, outstanding *sync.WaitGroup) {
+	defer outstanding.Done()
 
 	select {
 	case <-stopper:
@@ -362,7 +369,6 @@ func (cg *ConsumerGroup) consumeTopic(topic string, consumers kazoo.Consumergrou
 
 	partitionLeaders, err := retrievePartitionLeaders(partitions)
 	if err != nil {
-		// when a topic partition changes, might -> zk: node does not exist
 		log.Error("[%s/%s] get leader broker of topic[%s]: %s", cg.group.Name, cg.shortID(), topic, err)
 		cg.emitError(err, topic, -1)
 		return
