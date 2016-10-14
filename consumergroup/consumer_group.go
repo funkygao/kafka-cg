@@ -517,38 +517,37 @@ func (cg *ConsumerGroup) consumePartition(topic string, partition int32, wg *syn
 	err = nil
 	lastOffset := nextOffset
 
-partitionConsumerLoop:
-	for {
+	ever := true
+	for ever {
 		select {
 		case <-stopper:
-			break partitionConsumerLoop
+			ever = false
 
 		case <-cg.stopper:
-			break partitionConsumerLoop
+			ever = false
 
 		case err := <-consumer.Errors():
 			select {
 			case cg.errors <- err:
-				continue partitionConsumerLoop
 
 			case <-stopper:
-				break partitionConsumerLoop
+				ever = false
 			}
 
 		case message, ok := <-consumer.Messages():
 			if !ok {
 				cg.emitError(ErrConnBroken, topic, partition)
-				break partitionConsumerLoop
+				ever = false
+				continue
 			}
 
 			select {
 			case <-stopper:
-				break partitionConsumerLoop
+				ever = false
 
 			case cg.messages <- message:
 				lastOffset = message.Offset + 1
 				cg.offsetManager.MarkAsConsumed(topic, partition, message.Offset)
-				continue partitionConsumerLoop
 			}
 		}
 	}
