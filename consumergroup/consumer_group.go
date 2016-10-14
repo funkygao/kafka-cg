@@ -517,37 +517,41 @@ func (cg *ConsumerGroup) consumePartition(topic string, partition int32, wg *syn
 	err = nil
 	lastOffset := nextOffset
 
-partitionConsumerLoop:
-	for {
+	ever := true
+	for ever {
 		select {
 		case <-stopper:
-			break partitionConsumerLoop
+			ever = false
 
 		case <-cg.stopper:
-			break partitionConsumerLoop
+			ever = false
 
 		case err := <-consumer.Errors():
-			for {
-				select {
-				case cg.errors <- err:
-					continue partitionConsumerLoop
-
-				case <-stopper:
-					break partitionConsumerLoop
-				}
+			if err != nil && err.Err == sarama.ErrOffsetOutOfRange {
+				log.Error("[%s/%s] %s/%d last offset %d: %s", cg.group.Name, cg.shortID(), topic, partition, lastOffset, err)
 			}
 
-		case message := <-consumer.Messages():
-			for {
-				select {
-				case <-stopper:
-					break partitionConsumerLoop
+			select {
+			case cg.errors <- err:
 
-				case cg.messages <- message:
-					lastOffset = message.Offset + 1
-					cg.offsetManager.MarkAsConsumed(topic, partition, message.Offset)
-					continue partitionConsumerLoop
-				}
+			case <-stopper:
+				ever = false
+			}
+
+		case message, ok := <-consumer.Messages():
+			if !ok {
+				cg.emitError(ErrConnBroken, topic, partition)
+				ever = false
+				continue
+			}
+
+			select {
+			case <-stopper:
+				ever = false
+
+			case cg.messages <- message:
+				lastOffset = message.Offset + 1
+				cg.offsetManager.MarkAsConsumed(topic, partition, message.Offset)
 			}
 		}
 	}
