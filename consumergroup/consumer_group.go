@@ -527,14 +527,12 @@ partitionConsumerLoop:
 			break partitionConsumerLoop
 
 		case err := <-consumer.Errors():
-			for {
-				select {
-				case cg.errors <- err:
-					continue partitionConsumerLoop
+			select {
+			case cg.errors <- err:
+				continue partitionConsumerLoop
 
-				case <-stopper:
-					break partitionConsumerLoop
-				}
+			case <-stopper:
+				break partitionConsumerLoop
 			}
 
 		case message, ok := <-consumer.Messages():
@@ -543,16 +541,14 @@ partitionConsumerLoop:
 				break partitionConsumerLoop
 			}
 
-			for {
-				select {
-				case <-stopper:
-					break partitionConsumerLoop
+			select {
+			case <-stopper:
+				break partitionConsumerLoop
 
-				case cg.messages <- message:
-					lastOffset = message.Offset + 1
-					cg.offsetManager.MarkAsConsumed(topic, partition, message.Offset)
-					continue partitionConsumerLoop
-				}
+			case cg.messages <- message:
+				lastOffset = message.Offset + 1
+				cg.offsetManager.MarkAsConsumed(topic, partition, message.Offset)
+				continue partitionConsumerLoop
 			}
 		}
 	}
