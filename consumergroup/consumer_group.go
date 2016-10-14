@@ -401,6 +401,10 @@ func (cg *ConsumerGroup) consumeTopic(topic string, consumers kazoo.Consumergrou
 	// FIXME group1@id1 is consuming topic1[p0-5], group1@id2 starts to consume topic2[p0]
 	// for group1@id2, consumers=[group1@id1, group1@id2] partitionLeaders=[p0]
 	// the dicision might be: group1@id2 consumes nothing, which is wrong
+	//
+	// root reason: when making decision, we didn't consider the topics together
+	// if 2 groups consume the same set of topics, it will be ok
+	// if 2 groups consume different set of topics, it will be wrong
 	decision := dividePartitionsBetweenConsumers(consumers, partitionLeaders)
 	myPartitions := decision[cg.instance.ID] // TODO if myPartitions didn't change, needn't rebalance
 
