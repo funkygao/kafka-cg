@@ -527,6 +527,10 @@ func (cg *ConsumerGroup) consumePartition(topic string, partition int32, wg *syn
 			ever = false
 
 		case err := <-consumer.Errors():
+			if err != nil && err.Err == sarama.ErrOffsetOutOfRange {
+				log.Error("[%s/%s] %s/%d last offset %d: %s", cg.group.Name, cg.shortID(), topic, partition, lastOffset, err)
+			}
+
 			select {
 			case cg.errors <- err:
 
