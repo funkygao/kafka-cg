@@ -16,4 +16,5 @@ var (
 	ErrTooManyConsumers    = errors.New("Consumers more than available partitions")
 	ErrInvalidTopic        = errors.New("Invalid topic")
 	ErrConsumerConflict    = errors.New("One group can only consume one topic")
+	ErrConnBroken          = errors.New("Kafka connection broken")
 )

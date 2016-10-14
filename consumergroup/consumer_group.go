@@ -537,7 +537,12 @@ partitionConsumerLoop:
 				}
 			}
 
-		case message := <-consumer.Messages():
+		case message, ok := <-consumer.Messages():
+			if !ok {
+				cg.emitError(ErrConnBroken, topic, partition)
+				break partitionConsumerLoop
+			}
+
 			for {
 				select {
 				case <-stopper:
