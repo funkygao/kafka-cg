@@ -13,7 +13,7 @@ var (
 	OffsetBackwardsError   = errors.New("Offset to be committed is smaller than highest processed offset")
 	NoOffsetToCommit       = errors.New("No offsets to commit")
 	OffsetTooLarge         = errors.New("Offset to be committed is larger than highest consumed offset")
-	ErrTooManyConsumers    = errors.New("Consumers more than available partitions")
+	ErrTooManyConsumers    = errors.New("Consumers more than active partitions")
 	ErrInvalidTopic        = errors.New("Invalid topic")
 	ErrConsumerConflict    = errors.New("One group can only consume one topic")
 	ErrConnBroken          = errors.New("Kafka connection broken")
