@@ -19,7 +19,7 @@ import (
 type ConsumerGroup struct {
 	config *Config
 
-	consumer sarama.Consumer
+	consumer sarama.Consumer // TODO pool, share between groups
 
 	kazoo    *kazoo.Kazoo
 	group    *kazoo.Consumergroup
@@ -245,6 +245,7 @@ func (cg *ConsumerGroup) consumeTopics(topics []string) {
 
 		for _, topic := range topics {
 			outstanding.Add(2)
+			// TODO no watch, perioically get or when exception occurs in kafka
 			go cg.watchTopicPartitionsChange(topic, stopper, topicPartitionsChanged, &outstanding)
 			go cg.consumeTopic(topic, consumers, stopper, &outstanding)
 		}
@@ -401,8 +402,8 @@ func (cg *ConsumerGroup) consumeTopic(topic string, consumers kazoo.Consumergrou
 	// FIXME group1@id1 is consuming topic1[p0-5], group1@id2 starts to consume topic2[p0]
 	// for group1@id2, consumers=[group1@id1, group1@id2] partitionLeaders=[p0]
 	// the dicision might be: group1@id2 consumes nothing, which is wrong
-	decision := dividePartitionsBetweenConsumers(consumers, partitionLeaders)
-	myPartitions := decision[cg.instance.ID] // TODO if myPartitions didn't change, needn't rebalance
+	globalDecision := dividePartitionsBetweenConsumers(consumers, partitionLeaders)
+	myPartitions := globalDecision[cg.instance.ID] // TODO if myPartitions didn't change, needn't rebalance
 
 	if len(myPartitions) == 0 {
 		if !cg.config.PermitStandby {
@@ -455,6 +456,7 @@ func (cg *ConsumerGroup) consumePartition(topic string, partition int32, wg *syn
 			time.Sleep(time.Second)
 		} else if err == kazoo.ErrPartitionClaimedByOther {
 			// fail to claim owner after max retries
+			// found in prod env
 			cg.emitError(ErrTooManyConsumers, topic, partition)
 			log.Error("[%s/%s] claim %s/%d: %s", cg.group.Name, cg.shortID(), topic, partition, err)
 			return

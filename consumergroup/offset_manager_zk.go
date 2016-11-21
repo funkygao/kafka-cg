@@ -87,6 +87,11 @@ func (zom *zookeeperOffsetManager) FinalizePartition(topic string, partition int
 	}
 
 	if lastOffset >= 0 {
+		log.Debug("[%s/%s] %s/%d %d %d",
+			zom.cg.group.Name, zom.cg.shortID(),
+			topic, partition,
+			lastOffset, tracker.highestMarkedAsProcessedOffset)
+
 		if lastOffset-tracker.highestMarkedAsProcessedOffset > 1 {
 			if !tracker.waitForOffset(lastOffset, timeout) {
 				log.Debug("[%s/%s] %s/%d TIMEOUT %ds waiting for offset %d-%d. Last committed offset: %d",
