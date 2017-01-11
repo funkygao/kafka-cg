@@ -62,14 +62,6 @@ func JoinConsumerGroupRealIp(realIp string, name string, topics []string, zookee
 	}
 
 	group := kz.Consumergroup(name)
-	if config.Offsets.ResetOffsets {
-		err = group.ResetOffsets()
-		if err != nil {
-			kz.Close()
-			return
-		}
-	}
-
 	instance := group.NewInstanceRealIp(realIp)
 
 	cg = &ConsumerGroup{
@@ -100,6 +92,29 @@ func JoinConsumerGroupRealIp(realIp string, name string, topics []string, zookee
 		}
 	}
 
+	if !cg.config.PermitStandby {
+		// the 1st rebalance barrier, although not strict
+		// it might happen that we encounter ErrTooManyConsumers and retreat but
+		// then one of the alive instance dies: acceptable
+		partitionN := 0
+		for _, topic := range topics {
+			np, err := kz.Topic(topic).Partitions()
+			if err != nil {
+				log.Debug("[%s/%s] %s: %v", cg.group.Name, cg.shortID(), topic, err)
+				continue
+			}
+
+			partitionN += len(np)
+		}
+
+		consumerN := group.OnlineConsumers()
+		if consumerN >= partitionN {
+			kz.Close()
+			log.Debug("[%s/%s] give up for C(%d)>=P(%d)", cg.group.Name, cg.shortID(), consumerN, partitionN)
+			return nil, ErrTooManyConsumers
+		}
+	}
+
 	// Register itself with zookeeper: consumers/{group}/ids/{instanceId}
 	// This will lead to consumer group rebalance
 	if err := cg.instance.Register(topics); err != nil {
@@ -118,6 +133,14 @@ func JoinConsumerGroupRealIp(realIp string, name string, topics []string, zookee
 		return nil, err
 	} else {
 		cg.consumer = consumer
+	}
+
+	if config.Offsets.ResetOffsets {
+		err = group.ResetOffsets()
+		if err != nil {
+			kz.Close()
+			return
+		}
 	}
 
 	offsetConfig := OffsetManagerConfig{CommitInterval: config.Offsets.CommitInterval}
@@ -201,6 +224,14 @@ func (cg *ConsumerGroup) Close() error {
 	})
 
 	return shutdownError
+}
+
+func (cg *ConsumerGroup) ID() string {
+	if cg.instance == nil {
+		return ""
+	}
+
+	return cg.instance.ID
 }
 
 func (cg *ConsumerGroup) shortID() string {
