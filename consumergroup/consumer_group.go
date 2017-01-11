@@ -28,10 +28,9 @@ type ConsumerGroup struct {
 	wg             sync.WaitGroup
 	singleShutdown sync.Once
 
-	messages    chan *sarama.ConsumerMessage
-	errors      chan *sarama.ConsumerError
-	overConsume chan struct{}
-	stopper     chan struct{}
+	messages chan *sarama.ConsumerMessage
+	errors   chan *sarama.ConsumerError
+	stopper  chan struct{}
 
 	offsetManager OffsetManager
 	cacher        *freecache.Cache
@@ -72,10 +71,9 @@ func JoinConsumerGroupRealIp(realIp string, name string, topics []string, zookee
 		group:    group,
 		instance: instance,
 
-		messages:    make(chan *sarama.ConsumerMessage, config.ChannelBufferSize),
-		errors:      make(chan *sarama.ConsumerError, config.ChannelBufferSize),
-		overConsume: make(chan struct{}, 2),
-		stopper:     make(chan struct{}),
+		messages: make(chan *sarama.ConsumerMessage, config.ChannelBufferSize),
+		errors:   make(chan *sarama.ConsumerError, config.ChannelBufferSize),
+		stopper:  make(chan struct{}),
 	}
 	if config.NoDup {
 		cg.cacher = freecache.NewCache(1 << 20) // TODO
@@ -109,8 +107,10 @@ func JoinConsumerGroupRealIp(realIp string, name string, topics []string, zookee
 			partitionN += len(np)
 		}
 
-		if group.OnlineConsumers() >= partitionN {
+		consumerN := group.OnlineConsumers()
+		if consumerN >= partitionN {
 			kz.Close()
+			log.Debug("[%s/%s] give up for C(%d)>=P(%d)", cg.group.Name, cg.shortID(), consumerN, partitionN)
 			return nil, ErrTooManyConsumers
 		}
 	}
@@ -168,13 +168,6 @@ func (cg *ConsumerGroup) Messages() <-chan *sarama.ConsumerMessage {
 }
 
 func (cg *ConsumerGroup) emitError(err error, topic string, partition int32) {
-	if err == ErrTooManyConsumers {
-		select {
-		case cg.overConsume <- struct{}{}:
-		default:
-		}
-	}
-
 	select {
 	case cg.errors <- &sarama.ConsumerError{
 		Topic:     topic,
@@ -189,10 +182,6 @@ func (cg *ConsumerGroup) emitError(err error, topic string, partition int32) {
 // Returns a channel that you can read to obtain errors from Kafka to process.
 func (cg *ConsumerGroup) Errors() <-chan *sarama.ConsumerError {
 	return cg.errors
-}
-
-func (cg *ConsumerGroup) OverConsume() <-chan struct{} {
-	return cg.overConsume
 }
 
 func (cg *ConsumerGroup) Close() error {
