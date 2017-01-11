@@ -28,9 +28,10 @@ type ConsumerGroup struct {
 	wg             sync.WaitGroup
 	singleShutdown sync.Once
 
-	messages chan *sarama.ConsumerMessage
-	errors   chan *sarama.ConsumerError
-	stopper  chan struct{}
+	messages    chan *sarama.ConsumerMessage
+	errors      chan *sarama.ConsumerError
+	overConsume chan struct{}
+	stopper     chan struct{}
 
 	offsetManager OffsetManager
 	cacher        *freecache.Cache
@@ -62,14 +63,6 @@ func JoinConsumerGroupRealIp(realIp string, name string, topics []string, zookee
 	}
 
 	group := kz.Consumergroup(name)
-	if config.Offsets.ResetOffsets {
-		err = group.ResetOffsets()
-		if err != nil {
-			kz.Close()
-			return
-		}
-	}
-
 	instance := group.NewInstanceRealIp(realIp)
 
 	cg = &ConsumerGroup{
@@ -79,9 +72,10 @@ func JoinConsumerGroupRealIp(realIp string, name string, topics []string, zookee
 		group:    group,
 		instance: instance,
 
-		messages: make(chan *sarama.ConsumerMessage, config.ChannelBufferSize),
-		errors:   make(chan *sarama.ConsumerError, config.ChannelBufferSize),
-		stopper:  make(chan struct{}),
+		messages:    make(chan *sarama.ConsumerMessage, config.ChannelBufferSize),
+		errors:      make(chan *sarama.ConsumerError, config.ChannelBufferSize),
+		overConsume: make(chan struct{}, 2),
+		stopper:     make(chan struct{}),
 	}
 	if config.NoDup {
 		cg.cacher = freecache.NewCache(1 << 20) // TODO
@@ -97,6 +91,27 @@ func JoinConsumerGroupRealIp(realIp string, name string, topics []string, zookee
 		if err := cg.group.Create(); err != nil {
 			_ = kz.Close()
 			return nil, err
+		}
+	}
+
+	if !cg.config.PermitStandby {
+		// the 1st rebalance barrier, although not strict
+		// it might happen that we encounter ErrTooManyConsumers and retreat but
+		// then one of the alive instance dies: acceptable
+		partitionN := 0
+		for _, topic := range topics {
+			np, err := kz.Topic(topic).Partitions()
+			if err != nil {
+				log.Debug("[%s/%s] %s: %v", cg.group.Name, cg.shortID(), topic, err)
+				continue
+			}
+
+			partitionN += len(np)
+		}
+
+		if group.OnlineConsumers() >= partitionN {
+			kz.Close()
+			return nil, ErrTooManyConsumers
 		}
 	}
 
@@ -118,6 +133,14 @@ func JoinConsumerGroupRealIp(realIp string, name string, topics []string, zookee
 		return nil, err
 	} else {
 		cg.consumer = consumer
+	}
+
+	if config.Offsets.ResetOffsets {
+		err = group.ResetOffsets()
+		if err != nil {
+			kz.Close()
+			return
+		}
 	}
 
 	offsetConfig := OffsetManagerConfig{CommitInterval: config.Offsets.CommitInterval}
@@ -145,6 +168,13 @@ func (cg *ConsumerGroup) Messages() <-chan *sarama.ConsumerMessage {
 }
 
 func (cg *ConsumerGroup) emitError(err error, topic string, partition int32) {
+	if err == ErrTooManyConsumers {
+		select {
+		case cg.overConsume <- struct{}{}:
+		default:
+		}
+	}
+
 	select {
 	case cg.errors <- &sarama.ConsumerError{
 		Topic:     topic,
@@ -159,6 +189,10 @@ func (cg *ConsumerGroup) emitError(err error, topic string, partition int32) {
 // Returns a channel that you can read to obtain errors from Kafka to process.
 func (cg *ConsumerGroup) Errors() <-chan *sarama.ConsumerError {
 	return cg.errors
+}
+
+func (cg *ConsumerGroup) OverConsume() <-chan struct{} {
+	return cg.overConsume
 }
 
 func (cg *ConsumerGroup) Close() error {
@@ -201,6 +235,14 @@ func (cg *ConsumerGroup) Close() error {
 	})
 
 	return shutdownError
+}
+
+func (cg *ConsumerGroup) ID() string {
+	if cg.instance == nil {
+		return ""
+	}
+
+	return cg.instance.ID
 }
 
 func (cg *ConsumerGroup) shortID() string {
