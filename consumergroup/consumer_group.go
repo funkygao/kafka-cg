@@ -110,7 +110,7 @@ func JoinConsumerGroupRealIp(realIp string, name string, topics []string, zookee
 		consumerN := group.OnlineConsumers()
 		if consumerN >= partitionN {
 			kz.Close()
-			log.Debug("[%s/%s] give up for C(%d)>=P(%d)", cg.group.Name, cg.shortID(), consumerN, partitionN)
+			log.Debug("[%s/%s] give up %+v for C(%d)>=P(%d)", cg.group.Name, cg.shortID(), topics, consumerN, partitionN)
 			return nil, ErrTooManyConsumers
 		}
 	}
