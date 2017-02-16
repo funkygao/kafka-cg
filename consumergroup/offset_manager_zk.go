@@ -245,12 +245,7 @@ func (pot *partitionOffsetTracker) commit(committer offsetCommitter) error {
 
 		pot.lastCommittedOffset = pot.highestMarkedAsProcessedOffset
 	} else {
-		if err := committer(pot.lastConsumedOffset); err != nil {
-			return err
-		}
-
-		pot.highestMarkedAsProcessedOffset = pot.lastConsumedOffset
-		pot.lastCommittedOffset = pot.highestMarkedAsProcessedOffset
+		return NoOffsetToCommit
 	}
 
 	return nil
