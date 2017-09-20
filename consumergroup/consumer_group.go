@@ -21,9 +21,10 @@ type ConsumerGroup struct {
 
 	consumer sarama.Consumer // TODO pool, share between groups
 
-	kazoo    *kazoo.Kazoo
-	group    *kazoo.Consumergroup
-	instance *kazoo.ConsumergroupInstance
+	kazoo      *kazoo.Kazoo
+	group      *kazoo.Consumergroup
+	instance   *kazoo.ConsumergroupInstance
+	registered bool
 
 	wg             sync.WaitGroup
 	singleShutdown sync.Once
@@ -37,7 +38,16 @@ type ConsumerGroup struct {
 }
 
 func JoinConsumerGroupRealIp(realIp string, name string, topics []string, zookeeper []string,
-	config *Config) (cg *ConsumerGroup, err error) {
+	config *Config) (okCG *ConsumerGroup, err error) {
+
+	var cg *ConsumerGroup // we need this local cg to finish dirty data clean up in defer function
+	defer func() {
+		if err != nil {
+			log.Debug("cg dirty data clean up")
+			cg.Close()
+		}
+	}()
+
 	if name == "" {
 		return nil, sarama.ConfigurationError("Empty consumergroup name")
 	}
@@ -81,13 +91,13 @@ func JoinConsumerGroupRealIp(realIp string, name string, topics []string, zookee
 
 	// Register consumer group in zookeeper
 	if exists, err := cg.group.Exists(); err != nil {
-		_ = kz.Close()
+		// do not close kz seperately, clean up together
 		return nil, err
 	} else if !exists {
 		log.Debug("[%s/%s] consumer group in zk creating...", cg.group.Name, cg.shortID())
 
 		if err := cg.group.Create(); err != nil {
-			_ = kz.Close()
+			// do not close kz seperately, clean up together
 			return nil, err
 		}
 	}
@@ -109,7 +119,7 @@ func JoinConsumerGroupRealIp(realIp string, name string, topics []string, zookee
 
 		consumerN := group.OnlineConsumers()
 		if consumerN >= partitionN {
-			kz.Close()
+			// do not close kz seperately, clean up together
 			log.Debug("[%s/%s] give up %+v for C(%d)>=P(%d)", cg.group.Name, cg.shortID(), topics, consumerN, partitionN)
 			return nil, ErrTooManyConsumers
 		}
@@ -122,6 +132,7 @@ func JoinConsumerGroupRealIp(realIp string, name string, topics []string, zookee
 	} else {
 		log.Debug("[%s/%s] cg instance registered in zk for %+v", cg.group.Name, cg.shortID(), topics)
 	}
+	cg.registered = true // only if registered, we will de-register when closing
 
 	// kafka connect
 	brokers, err := cg.kazoo.BrokerList()
@@ -138,7 +149,7 @@ func JoinConsumerGroupRealIp(realIp string, name string, topics []string, zookee
 	if config.Offsets.ResetOffsets {
 		err = group.ResetOffsets()
 		if err != nil {
-			kz.Close()
+			// do not close kz seperately, clean up together
 			return
 		}
 	}
@@ -149,6 +160,8 @@ func JoinConsumerGroupRealIp(realIp string, name string, topics []string, zookee
 	cg.wg.Add(1)
 	go cg.consumeTopics(topics)
 
+	// return the okCG
+	okCG = cg
 	return
 }
 
@@ -184,46 +197,75 @@ func (cg *ConsumerGroup) Errors() <-chan *sarama.ConsumerError {
 	return cg.errors
 }
 
+// Close ConsumerGroup
+// Also clean dirty data for uncompleted ConsumerGroup
 func (cg *ConsumerGroup) Close() error {
 	shutdownError := AlreadyClosing
-	cg.singleShutdown.Do(func() {
-		log.Debug("[%s/%s] closing...", cg.group.Name, cg.shortID())
+	if cg != nil {
+		cg.singleShutdown.Do(func() {
+			var cgName = cg.group.Name
+			var cgID = cg.shortID()
+			log.Debug("[%s/%s] closing...", cgName, cgID)
 
-		shutdownError = nil
+			shutdownError = nil
 
-		close(cg.stopper) // notify all sub-goroutines to stop
-		cg.wg.Wait()      // await cg.consumeTopics() done
+			close(cg.stopper) // notify all sub-goroutines to stop
+			cg.wg.Wait()      // await cg.consumeTopics() done
 
-		if err := cg.offsetManager.Close(); err != nil {
-			// e,g. Not all offsets were committed before shutdown was completed
-			log.Error("[%s/%s] closing offset manager: %s", cg.group.Name, cg.shortID(), err)
-		}
-
-		if shutdownError = cg.instance.Deregister(); shutdownError != nil {
-			log.Error("[%s/%s] de-register cg instance: %s", cg.group.Name, cg.shortID(), shutdownError)
-		} else {
-			log.Debug("[%s/%s] de-registered cg instance", cg.group.Name, cg.shortID())
-		}
-
-		if cg.consumer != nil {
-			if shutdownError = cg.consumer.Close(); shutdownError != nil {
-				log.Error("[%s/%s] closing Sarama consumer: %v", cg.group.Name, cg.shortID(), shutdownError)
+			// when dirty data clean up close, offsetManager may not created
+			if cg.offsetManager != nil {
+				if err := cg.offsetManager.Close(); err != nil {
+					// e,g. Not all offsets were committed before shutdown was completed
+					log.Error("[%s/%s] closing offset manager: %s", cgName, cgID, err)
+				}
+			} else {
+				log.Debug("[%s/%s] offset manager not created", cgName, cgID)
 			}
-		}
 
-		close(cg.messages)
-		close(cg.errors)
+			if cg.registered {
+				if shutdownError = cg.instance.Deregister(); shutdownError != nil {
+					log.Error("[%s/%s] de-register cg instance: %s", cgName, cgID, shutdownError)
+				} else {
+					log.Debug("[%s/%s] de-registered cg instance", cgName, cgID)
+				}
+			} else {
+				// when errClose, instance maynot register,
+				log.Debug("[%s/%s] cg instance not reigstered, no de-reigster needed", cgName, cgID)
+			}
 
-		log.Debug("[%s/%s] closed", cg.group.Name, cg.shortID())
+			if cg.consumer != nil {
+				if shutdownError = cg.consumer.Close(); shutdownError != nil {
+					log.Error("[%s/%s] closing Sarama consumer: %v", cgName, cgID, shutdownError)
+				}
+			} else {
+				log.Debug("[%s/%s] cg.consumer not created", cgName, cgID)
+			}
 
-		cg.instance = nil
-		cg.kazoo.Close()
-		if cg.cacher != nil {
-			// nothing? TODO gc it quickly
-		}
-	})
+			close(cg.messages)
+			close(cg.errors)
 
-	return shutdownError
+			log.Debug("[%s/%s] closed", cgName, cgID)
+
+			cg.instance = nil
+
+			if cg.kazoo != nil {
+				cg.kazoo.Close()
+			} else {
+				log.Debug("[%s/%s] cg.kazoo not created", cgName, cgID)
+			}
+
+			if cg.cacher != nil {
+				// nothing? TODO gc it quickly
+			}
+		})
+
+		return shutdownError
+
+	} else {
+		log.Debug("nil consumergroup closed")
+		return nil
+	}
+
 }
 
 func (cg *ConsumerGroup) ID() string {
@@ -308,6 +350,7 @@ func (cg *ConsumerGroup) consumeTopics(topics []string) {
 					cg.emitError(err, topics[0], -1)
 				} else {
 					log.Info("[%s/%s] re-registered cg instance for %+v", cg.group.Name, cg.shortID(), topics)
+					cg.registered = true
 				}
 			}
 
