@@ -17,4 +17,5 @@ var (
 	ErrInvalidTopic        = errors.New("Invalid topic")
 	ErrConsumerConflict    = errors.New("One group can only consume one topic")
 	ErrConnBroken          = errors.New("Kafka connection broken")
+	ErrKafkaDead           = errors.New("Kakfa brokers all dead")
 )

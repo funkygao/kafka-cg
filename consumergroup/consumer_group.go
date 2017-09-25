@@ -124,9 +124,15 @@ func JoinConsumerGroupRealIp(realIp string, name string, topics []string, zookee
 	}
 
 	// kafka connect
+	// cleanup the kazoo conn in case of failure
 	brokers, err := cg.kazoo.BrokerList()
 	if err != nil {
+		kz.Close()
 		return nil, err
+	}
+	if len(brokers) == 0 {
+		kz.Close()
+		return nil, ErrKafkaDead
 	}
 
 	if consumer, err := sarama.NewConsumer(brokers, cg.config.Config); err != nil {
